@@ -25,7 +25,7 @@ def _log_error(message: str, exc: Exception = None):
     sys.stdout.flush()
 
 
-MAX_NAVIGATION_ATTEMPTS = 5
+# Maximum number of form pages to process in a multi-page application
 MAX_FORM_PAGES = 10
 
 
@@ -74,10 +74,11 @@ class FormFiller:
         
         self._last_ai_response = None
         
+        # Default: no retries - each step processed only once
         self.autofill_engine.configure(
             stop_on_error=False,
-            retry_count=2,
-            retry_delay_ms=500,
+            retry_count=0,  # No retries - single attempt per field
+            retry_delay_ms=0,
         )
     
     def _extract_page_content(self, page) -> PageContent:
@@ -474,20 +475,13 @@ class FormFiller:
         if ai_response.submit_button:
             print(f"  [AI] Submit button: {ai_response.submit_button.get('selector', 'N/A')}")
         
+        # NOTE: If AI says needs_navigation, we DON'T execute navigation here.
+        # Navigation is handled in the main loop after this function returns.
+        # This prevents duplicate processing of the same page.
         if ai_response.needs_navigation and not has_captcha:
-            print(f"  [NAV] Page needs navigation first...")
-            for nav in ai_response.navigation_actions:
-                cmd = nav.to_autofill_command()
-                self.autofill_engine.execute(cmd)
-            
-            return FormFillingResult(
-                success=True,
-                page_number=0,
-                fields_filled=0,
-                fields_failed=0,
-                needs_more_navigation=True,
-                submit_ready=False,
-            )
+            print(f"  [NAV] AI detected page needs navigation (will be handled by main loop)")
+            # Don't execute navigation here - let main loop handle it
+            pass
         
         filled = 0
         failed = 0
@@ -513,40 +507,24 @@ class FormFiller:
                 ai_response=ai_response,
             )
         
-        # If not a form page, try to find and click "Apply" or "Start" buttons
+        # If not a form page with no fields, check what navigation options exist
+        # NOTE: We do NOT click buttons here - that's done in the main loop
         if not ai_response.is_form_page and not ai_response.field_mappings:
-            print(f"  [NAV] Page is not a form, looking for Apply/Start buttons...")
+            print(f"  [NAV] Page is not a form page (no fields to fill)")
             
-            # Try to find common "Apply" or "Start Application" buttons
-            if self._try_click_apply_button(page):
-                print(f"  [NAV] Clicked apply button, waiting for form to load...")
-                try:
-                    page.wait_for_load_state("networkidle", timeout=5000)
-                except Exception:
-                    pass
-                
-                return FormFillingResult(
-                    success=True,
-                    page_number=page_number,
-                    fields_filled=0,
-                    fields_failed=0,
-                    needs_more_navigation=True,
-                    submit_ready=False,
-                )
-            
-            # If AI detected a next/submit button, use that for navigation
+            # Check if there are navigation options (next/submit buttons detected by AI)
             if has_next or has_submit:
-                print(f"  [NAV] Found navigation button, will try to proceed...")
+                print(f"  [NAV] AI detected navigation buttons - will be handled by main loop")
                 return FormFillingResult(
                     success=True,
                     page_number=page_number,
                     fields_filled=0,
                     fields_failed=0,
-                    needs_more_navigation=True,
+                    needs_more_navigation=True,  # Let main loop handle navigation
                     submit_ready=False,
                 )
             
-            # No form and no navigation options - this might be a confirmation page or error
+            # No form and no navigation options - this might be a landing page or confirmation
             print(f"  [WARN] No form fields or navigation buttons found")
             return FormFillingResult(
                 success=False,
@@ -555,7 +533,7 @@ class FormFiller:
                 fields_failed=0,
                 needs_more_navigation=False,
                 submit_ready=False,
-                error="Not a form page and no navigation buttons found. The page might be a confirmation page or require manual navigation.",
+                error="Not a form page and no navigation buttons found. May need to click Apply button manually.",
             )
         
         return FormFillingResult(
@@ -614,72 +592,77 @@ class FormFiller:
         total_failed = 0
         all_unmapped = []
         
+        # Track processed URLs to prevent re-processing same page
+        processed_urls = set()
+        
         for page_num in range(MAX_FORM_PAGES):
+            current_url = page.url
+            
+            # Check if we already processed this exact URL
+            if current_url in processed_urls:
+                print(f"\n  === PAGE {page_num + 1} - ALREADY PROCESSED ===")
+                print(f"  [SKIP] URL already processed: {current_url[:60]}...")
+                print(f"  [STOP] Stopping to prevent duplicate processing")
+                break
+            
             print(f"\n  === PAGE {page_num + 1} ===")
+            print(f"  [URL] {current_url}")
+            
+            # Mark this URL as processed BEFORE processing
+            processed_urls.add(current_url)
             
             self.app_logger.log_sync(
                 job_id=self.job_id,
                 action=LogAction.PAGE_LOADED,
-                details={"url": page.url, "page_number": page_num + 1},
+                details={"url": current_url, "page_number": page_num + 1},
             )
             
-            nav_attempts = 0
-            result = None
+            # Process page ONCE - no retries on same page
+            result = self.process_page(page)
             
-            while nav_attempts < MAX_NAVIGATION_ATTEMPTS:
-                result = self.process_page(page)
+            # Handle CAPTCHA - pause and return
+            if result.captcha_detected and result.paused:
+                total_filled += result.fields_filled
+                total_failed += result.fields_failed
+                all_unmapped.extend(result.unmapped_fields or [])
                 
-                if result.captcha_detected and result.paused:
-                    total_filled += result.fields_filled
-                    total_failed += result.fields_failed
-                    all_unmapped.extend(result.unmapped_fields or [])
-                    
-                    print(f"  [PAUSED] CAPTCHA blocking. Filled {total_filled} fields total.")
-                    
-                    return FormFillingResult(
-                        success=True,
-                        page_number=page_num + 1,
-                        fields_filled=total_filled,
-                        fields_failed=total_failed,
-                        needs_more_navigation=result.needs_more_navigation,
-                        submit_ready=result.submit_ready,
-                        captcha_detected=True,
-                        captcha_type=result.captcha_type,
-                        paused=True,
-                        pause_reason=result.pause_reason,
-                        unmapped_fields=all_unmapped,
-                    )
+                print(f"  [PAUSED] CAPTCHA blocking. Filled {total_filled} fields total.")
                 
-                if result.error:
-                    print(f"  [ERROR] {result.error}")
-                    self.storage.set_session_status(self.job_id, "error", result.error)
-                    self.app_logger.log_sync(
-                        job_id=self.job_id,
-                        action=LogAction.ERROR,
-                        details={"error": result.error, "page_number": page_num + 1},
-                    )
-                    self.notifier.notify_job_failed(
-                        job_id=self.job_id,
-                        profile_id=self.profile_data.get("id"),
-                        error=result.error,
-                    )
-                    return result
-                
-                if result.needs_more_navigation and result.fields_filled == 0:
-                    print(f"  [NAV] Waiting for page load...")
-                    try:
-                        page.wait_for_load_state("networkidle", timeout=5000)
-                    except Exception:
-                        pass
-                    nav_attempts += 1
-                    continue
-                
-                break
+                return FormFillingResult(
+                    success=True,
+                    page_number=page_num + 1,
+                    fields_filled=total_filled,
+                    fields_failed=total_failed,
+                    needs_more_navigation=result.needs_more_navigation,
+                    submit_ready=result.submit_ready,
+                    captcha_detected=True,
+                    captcha_type=result.captcha_type,
+                    paused=True,
+                    pause_reason=result.pause_reason,
+                    unmapped_fields=all_unmapped,
+                )
+            
+            # Handle error - stop processing
+            if result.error:
+                print(f"  [ERROR] {result.error}")
+                self.storage.set_session_status(self.job_id, "error", result.error)
+                self.app_logger.log_sync(
+                    job_id=self.job_id,
+                    action=LogAction.ERROR,
+                    details={"error": result.error, "page_number": page_num + 1},
+                )
+                self.notifier.notify_job_failed(
+                    job_id=self.job_id,
+                    profile_id=self.profile_data.get("id"),
+                    error=result.error,
+                )
+                return result
             
             total_filled += result.fields_filled
             total_failed += result.fields_failed
             all_unmapped.extend(result.unmapped_fields or [])
             
+            # CASE 1: Submit ready - application complete
             if result.submit_ready:
                 print(f"  [READY] Application ready for submission!")
                 print(f"  [READY] Total: {total_filled} filled, {total_failed} failed")
@@ -711,28 +694,53 @@ class FormFiller:
                     unmapped_fields=all_unmapped,
                 )
             
-            if result.needs_more_navigation and result.fields_filled > 0:
-                print(f"  [NAV] Looking for next button...")
+            # CASE 2: Need to navigate to next page
+            if result.needs_more_navigation:
+                print(f"  [NAV] Looking for navigation button...")
                 
+                url_before_click = page.url
                 ai_resp = self._last_ai_response
-                next_clicked = False
+                nav_clicked = False
                 
-                if ai_resp and ai_resp.next_button:
-                    next_clicked = self._click_navigation_button(page, ai_resp.next_button, "next")
+                # For non-form pages (no fields filled), try Apply button first
+                if result.fields_filled == 0:
+                    print(f"  [NAV] No fields filled - trying Apply/Start buttons...")
+                    nav_clicked = self._try_click_apply_button(page)
                 
-                if not next_clicked:
-                    next_clicked = self._click_next_button_fallback(page)
+                # Try AI-detected next button
+                if not nav_clicked and ai_resp and ai_resp.next_button:
+                    print(f"  [NAV] Trying AI-detected next button...")
+                    nav_clicked = self._click_navigation_button(page, ai_resp.next_button, "next")
                 
-                if next_clicked:
-                    print(f"  [NAV] Clicked next, waiting for new page...")
+                # Fallback to common patterns
+                if not nav_clicked:
+                    print(f"  [NAV] Trying common next button patterns...")
+                    nav_clicked = self._click_next_button_fallback(page)
+                
+                if nav_clicked:
+                    print(f"  [NAV] Button clicked, waiting for page to load...")
                     try:
                         page.wait_for_load_state("networkidle", timeout=10000)
                     except Exception:
                         pass
+                    
+                    # Verify URL actually changed
+                    url_after_click = page.url
+                    if url_after_click == url_before_click:
+                        print(f"  [NAV] WARNING: URL did not change after click!")
+                        print(f"  [NAV] Stopping to prevent infinite loop")
+                        break
+                    
+                    print(f"  [NAV] URL changed: {url_after_click[:60]}...")
+                    # Continue to next page in the loop
                     continue
                 else:
-                    print(f"  [NAV] Could not find next button, stopping")
+                    # Could not click any button - stop processing
+                    print(f"  [NAV] Could not find/click any navigation button, stopping")
+                    break
             
+            # CASE 3: No more navigation needed and not submit ready - stop
+            print(f"  [DONE] Page processed, no more navigation needed")
             break
         
         final_status = "completed" if total_filled > 0 else "incomplete"

@@ -90,7 +90,7 @@ class ElementLocator:
         selector: str,
         selector_type: SelectorType = SelectorType.CSS,
         timeout_ms: int = 10000,
-        retries: int = 3,
+        retries: int = 1,  # Default: single attempt (no retries)
     ) -> WebElement:
         last_error = None
         for _ in range(retries):
@@ -98,7 +98,8 @@ class ElementLocator:
                 return self.find(selector, selector_type, timeout_ms)
             except (ElementNotFoundError, StaleElementReferenceException) as e:
                 last_error = e
-                time.sleep(0.5)
+                if retries > 1:
+                    time.sleep(0.5)  # Only sleep if actually retrying
         raise last_error or ElementNotFoundError(selector, selector_type.value)
     
     def find_in_iframe(

@@ -1,0 +1,166 @@
+{
+  "job_id": "df638a57-e65c-4756-81ec-a170ad7c90bd",
+  "profile_id": "7c9a0092-5e7e-45df-8e0b-06266715814c",
+  "url": "https://jobs.micro1.ai/post/33ac3e3b-17f1-4a1c-981d-f9397e004c1f",
+  "status": "completed",
+  "current_page": 1,
+  "page_snapshots": [
+    {
+      "url": "https://jobs.micro1.ai/post/33ac3e3b-17f1-4a1c-981d-f9397e004c1f",
+      "title": "AI/ML Engineer | Apply on Job",
+      "filtered_html": "<html>",
+      "inputs": [
+        {
+          "aria-label": "",
+          "autocomplete": "",
+          "data-automation-id": "",
+          "data-testid": "",
+          "id": "",
+          "label": "Enter your first name",
+          "name": "first_name",
+          "placeholder": "Enter your first name",
+          "required": false,
+          "tag": "input",
+          "type": "text",
+          "value": ""
+        },
+        {
+          "aria-label": "",
+          "autocomplete": "",
+          "data-automation-id": "",
+          "data-testid": "",
+          "id": "",
+          "label": "Enter your last name",
+          "name": "last_name",
+          "placeholder": "Enter your last name",
+          "required": false,
+          "tag": "input",
+          "type": "text",
+          "value": ""
+        },
+        {
+          "aria-label": "",
+          "autocomplete": "",
+          "data-automation-id": "",
+          "data-testid": "",
+          "id": "",
+          "label": "Enter your email address",
+          "name": "email_id",
+          "placeholder": "Enter your email address",
+          "required": false,
+          "tag": "input",
+          "type": "text",
+          "value": ""
+        },
+        {
+          "aria-label": "",
+          "autocomplete": "tel",
+          "data-automation-id": "",
+          "data-testid": "",
+          "id": "",
+          "label": "",
+          "name": "",
+          "placeholder": "",
+          "required": false,
+          "tag": "input",
+          "type": "tel",
+          "value": "+1"
+        },
+        {
+          "aria-label": "",
+          "autocomplete": "",
+          "data-automation-id": "",
+          "data-testid": "",
+          "id": "",
+          "label": "Enter your LinkedIn URL",
+          "name": "linkedin_url",
+          "placeholder": "Enter your LinkedIn URL",
+          "required": false,
+          "tag": "input",
+          "type": "text",
+          "value": ""
+        }
+      ],
+      "buttons": [
+        {
+          "aria-label": "",
+          "class": "sc-bRKDuR bCZExY  ",
+          "data-automation-id": "",
+          "data-testid": "",
+          "id": "",
+          "name": "",
+          "tag": "label",
+          "text": "Click to upload or drag & drop (.pdf)",
+          "type": "button"
+        },
+        {
+          "aria-label": "",
+          "class": "flex items-center justify-center gap-2 ease-in focus:outline-none font-medium rounded-full transition-all text-white bg-primary-600 hover:bg-primary-700 focus:ring-4 text-base w-full !rounded-[8px] px-5 py-[9px] border border-white/20 bg-gradient-to-r from-[#374BFF] from-24.81% to-[#212D99] to-96.41% [background:linear-gradient(120deg,#374BFF_24.81%,#212D99_96.41%)] h-[38px]",
+          "data-automation-id": "",
+          "data-testid": "",
+          "id": "",
+          "name": "",
+          "purpose": "next",
+          "tag": "button",
+          "text": "Next",
+          "type": "submit"
+        }
+      ],
+      "forms": [
+        {
+          "action": "https://jobs.micro1.ai/post/33ac3e3b-17f1-4a1c-981d-f9397e004c1f",
+          "id": "",
+          "index": 0,
+          "method": "get",
+          "name": ""
+        }
+      ],
+      "timestamp": "2025-12-23T06:06:29.671260+00:00",
+      "page_number": 1
+    }
+  ],
+  "autofill_results": [
+    {
+      "field_name": "First Name",
+      "selector": "[name='first_name']",
+      "action": "type_text",
+      "value": "Andre",
+      "success": true,
+      "error": null,
+      "duration_ms": 532
+    },
+    {
+      "field_name": "Last Name",
+      "selector": "[name='last_name']",
+      "action": "type_text",
+      "value": "Ballard",
+      "success": true,
+      "error": null,
+      "duration_ms": 492
+    },
+    {
+      "field_name": "Email",
+      "selector": "[name='email_id']",
+      "action": "type_text",
+      "value": "andre.ballard.1106@gmail.com",
+      "success": true,
+      "error": null,
+      "duration_ms": 550
+    },
+    {
+      "field_name": "LinkedIn URL",
+      "selector": "[name='linkedin_url']",
+      "action": "type_text",
+      "value": "https://www.linkedin.com/in/andre-ballard-aa45a16b/",
+      "success": true,
+      "error": null,
+      "duration_ms": 580
+    }
+  ],
+  "navigation_history": [
+    "https://jobs.micro1.ai/post/33ac3e3b-17f1-4a1c-981d-f9397e004c1f"
+  ],
+  "created_at": "2025-12-23T06:06:21.381284+00:00",
+  "updated_at": "2025-12-23T06:06:36.060438+00:00",
+  "error_message": null
+}

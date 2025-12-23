@@ -85,7 +85,82 @@ class FormFiller:
         print(f"  [EXTRACT] Analyzing page content...")
         content = self.page_analyzer.analyze(page)
         print(f"  [EXTRACT] Found {len(content.inputs)} inputs, {len(content.buttons)} buttons")
+        
+        # Log the extracted content for debugging
+        self._log_extracted_content(content)
+        
         return content
+    
+    def _log_extracted_content(self, content: PageContent) -> None:
+        """Log detailed extracted page content before sending to OpenAI."""
+        print("\n" + "="*80)
+        print("  [EXTRACTED CONTENT - READY FOR OPENAI]")
+        print("="*80)
+        
+        # URL and Title
+        print(f"\n  📍 URL: {content.url}")
+        print(f"  📄 Title: {content.title}")
+        
+        # Forms
+        print(f"\n  📋 FORMS ({len(content.forms)}):")
+        if content.forms:
+            for i, form in enumerate(content.forms[:5]):  # Limit to 5 forms
+                print(f"      {i+1}. id='{form.get('id', '')}' name='{form.get('name', '')}' action='{form.get('action', '')[:50]}'")
+        else:
+            print("      (No forms found)")
+        
+        # Inputs - detailed list
+        print(f"\n  🔤 INPUTS ({len(content.inputs)}):")
+        if content.inputs:
+            for i, inp in enumerate(content.inputs):
+                tag = inp.get('tag', 'input')
+                inp_type = inp.get('type', 'text')
+                inp_id = inp.get('id', '')
+                inp_name = inp.get('name', '')
+                label = inp.get('label', '')[:50] if inp.get('label') else ''
+                placeholder = inp.get('placeholder', '')[:30] if inp.get('placeholder') else ''
+                required = '[REQ]' if inp.get('required') else ''
+                
+                # Show options for select elements
+                options_str = ''
+                if inp.get('options'):
+                    opt_texts = [o.get('text', '')[:20] for o in inp['options'][:4]]
+                    options_str = f" options=[{', '.join(opt_texts)}...]"
+                
+                print(f"      {i+1:2}. <{tag}> type='{inp_type}' id='{inp_id}' name='{inp_name}' "
+                      f"label='{label}' placeholder='{placeholder}' {required}{options_str}")
+        else:
+            print("      (No inputs found)")
+        
+        # Buttons - detailed list
+        print(f"\n  🔘 BUTTONS ({len(content.buttons)}):")
+        if content.buttons:
+            for i, btn in enumerate(content.buttons):
+                btn_tag = btn.get('tag', 'button')
+                btn_id = btn.get('id', '')
+                btn_text = btn.get('text', '')[:40] if btn.get('text') else ''
+                btn_type = btn.get('type', '')
+                btn_purpose = btn.get('purpose', 'unknown')
+                data_auto = btn.get('data-automation-id', '')
+                
+                print(f"      {i+1:2}. <{btn_tag}> text='{btn_text}' type='{btn_type}' "
+                      f"id='{btn_id}' purpose='{btn_purpose}' data-auto='{data_auto}'")
+        else:
+            print("      (No buttons found)")
+        
+        # Filtered HTML size
+        html_size = len(content.filtered_html) if content.filtered_html else 0
+        print(f"\n  📝 FILTERED HTML SIZE: {html_size:,} characters")
+        
+        # Show first 500 chars of filtered HTML
+        if content.filtered_html and len(content.filtered_html) > 0:
+            preview = content.filtered_html[:500].replace('\n', ' ')
+            print(f"  📝 HTML PREVIEW (first 500 chars):")
+            print(f"      {preview}...")
+        
+        print("\n" + "="*80)
+        print("  [END EXTRACTED CONTENT]")
+        print("="*80 + "\n")
     
     def _check_for_captcha(self, page, page_content: PageContent) -> CaptchaDetectionResult:
         """Check if CAPTCHA is present on page."""
@@ -350,18 +425,38 @@ class FormFiller:
     
     def _process_page_internal(self, page) -> FormFillingResult:
         """Internal page processing with error handling at caller."""
+        short_id = self.job_id[:8]
         
+        # ============================================
+        # STEP 7.1: Extract Page Content
+        # ============================================
+        print(f"\n  [{short_id}] STEP 7.1: Extracting page content...")
         page_content = self._extract_page_content(page)
         
+        # ============================================
+        # STEP 7.2: Save Page Snapshot
+        # ============================================
+        print(f"\n  [{short_id}] STEP 7.2: Saving page snapshot to storage...")
         self.storage.add_page_snapshot(self.job_id, page_content.to_dict())
+        print(f"  [{short_id}] ✓ Page snapshot saved")
         
+        # ============================================
+        # STEP 7.3: Check for CAPTCHA
+        # ============================================
+        print(f"\n  [{short_id}] STEP 7.3: Checking for CAPTCHA...")
         captcha_result = self._check_for_captcha(page, page_content)
         has_captcha = captcha_result.detected
         
         if has_captcha:
-            print(f"  [CAPTCHA] Detected on page: {captcha_result.captcha_type}")
+            print(f"  [{short_id}] ⚠ CAPTCHA DETECTED: {captcha_result.captcha_type}")
+            print(f"  [{short_id}]   Confidence: {captcha_result.confidence}")
+        else:
+            print(f"  [{short_id}] ✓ No CAPTCHA detected")
         
-        print(f"  [AI] Calling OpenAI to analyze page and generate commands...")
+        # ============================================
+        # STEP 7.4: Call OpenAI for Analysis
+        # ============================================
+        print(f"\n  [{short_id}] STEP 7.4: Calling OpenAI to analyze page and generate commands...")
         ai_response = self.ai_service.analyze_and_generate_commands_sync(
             page_content.to_dict(),
             self.profile_data,

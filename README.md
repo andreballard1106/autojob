@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)
 ![React](https://img.shields.io/badge/React-18+-61dafb.svg)
-![SQLite](https://img.shields.io/badge/SQLite-3-003B57.svg)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-336791.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 
 ## ✨ Features
@@ -22,13 +22,14 @@
 
 ## 🚀 Quick Start (No Docker Required!)
 
-This project uses **SQLite** by default - no database installation needed!
+This project uses **PostgreSQL** as the database.
 
 ### Prerequisites
 
 - Python 3.11+
 - Node.js 18+
 - Chrome browser
+- PostgreSQL 14+
 
 ### Step 1: Backend Setup
 
@@ -71,7 +72,7 @@ npm run dev
 - **Dashboard:** http://localhost:5173
 - **API Docs:** http://localhost:8000/docs
 
-That's it! No Docker, no PostgreSQL, no Redis needed for development.
+That's it! The application will connect to PostgreSQL and create tables automatically.
 
 ---
 
@@ -91,8 +92,8 @@ That's it! No Docker, no PostgreSQL, no Redis needed for development.
                     │                          │
                     ▼                          ▼
             ┌──────────────┐         ┌─────────────────────┐
-            │   SQLite     │         │  Automation Engine  │
-            │  (jobapp.db) │         │  (Playwright)       │
+            │  PostgreSQL  │         │  Automation Engine  │
+            │   (autojob)  │         │  (Playwright)       │
             └──────────────┘         └─────────────────────┘
 ```
 
@@ -126,15 +127,19 @@ That's it! No Docker, no PostgreSQL, no Redis needed for development.
 ### Default Settings (in `backend/app/config.py`)
 
 ```python
-# Database: SQLite (no installation needed)
-use_sqlite: bool = True
-
-# Background Processing: Synchronous (no Redis needed)
-use_celery: bool = False
+# Database (PostgreSQL)
+db_host: str = "localhost"
+db_port: int = 5432
+db_name: str = "autojob"
+db_user: str = "postgres"
+db_password: str = "your_password"
 
 # Browser instances
 max_concurrent_browsers: int = 5
 browser_timeout: int = 300
+
+# SQL query logging (disable for cleaner console output)
+sql_echo: bool = False
 ```
 
 ### Enable AI Cover Letters
@@ -146,20 +151,20 @@ openai_api_key: str = "sk-your-actual-api-key"
 enable_ai_cover_letter: bool = True
 ```
 
-### Production Mode (with PostgreSQL)
+### Environment Variables
 
-For production, set in `backend/app/config.py`:
+You can override settings via environment variables or a `.env` file in the backend directory:
 
-```python
-use_sqlite: bool = False  # Use PostgreSQL
-use_celery: bool = True   # Use Redis for background jobs
-
-# PostgreSQL settings
-postgres_host: str = "localhost"
-postgres_port: int = 5432
-postgres_user: str = "jobapp"
-postgres_password: str = "qweqwe123"
-postgres_db: str = "jobapp"
+```bash
+# .env
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=autojob
+DB_USER=postgres
+DB_PASSWORD=your_password
+OPENAI_API_KEY=sk-your-api-key
+DEBUG=false
+SQL_ECHO=false
 ```
 
 ## 🌐 Supported Job Platforms

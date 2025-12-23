@@ -247,6 +247,86 @@ class AIService:
         if self.api_key:
             self.client = openai.OpenAI(api_key=self.api_key)
     
+    def _log_openai_request(
+        self,
+        page_content: Dict[str, Any],
+        profile_data: Dict[str, Any],
+        prompt: str,
+    ) -> None:
+        """Log detailed information about the OpenAI request."""
+        print("\n" + "="*80)
+        print("  [OPENAI REQUEST - DATA BEING SENT]")
+        print("="*80)
+        
+        # Profile data summary
+        print("\n  👤 PROFILE DATA:")
+        print(f"      Name: {profile_data.get('first_name', '')} {profile_data.get('middle_name', '')} {profile_data.get('last_name', '')}")
+        print(f"      Email: {profile_data.get('email', '')}")
+        print(f"      Phone: {profile_data.get('phone', '')}")
+        print(f"      Address: {profile_data.get('address_1', '')} {profile_data.get('address_2', '')}")
+        print(f"      City/State/Zip: {profile_data.get('city', '')}, {profile_data.get('state', '')} {profile_data.get('zip_code', '')}")
+        print(f"      Country: {profile_data.get('country', '')}")
+        print(f"      LinkedIn: {profile_data.get('linkedin_url', '')}")
+        print(f"      GitHub: {profile_data.get('github_url', '')}")
+        print(f"      Portfolio: {profile_data.get('portfolio_url', '')}")
+        
+        # Work experience
+        work_exp = profile_data.get('work_experience', [])
+        print(f"\n  💼 WORK EXPERIENCE ({len(work_exp)} entries):")
+        if work_exp:
+            for i, exp in enumerate(work_exp[:3]):
+                title = exp.get('job_title', exp.get('title', 'N/A'))
+                company = exp.get('company_name', exp.get('company', 'N/A'))
+                start = exp.get('start_date', 'N/A')
+                end = exp.get('end_date', 'Present')
+                print(f"      {i+1}. {title} at {company} ({start} - {end})")
+            if len(work_exp) > 3:
+                print(f"      ... and {len(work_exp) - 3} more")
+        else:
+            print("      (No work experience)")
+        
+        # Education
+        education = profile_data.get('education', [])
+        print(f"\n  🎓 EDUCATION ({len(education)} entries):")
+        if education:
+            for i, edu in enumerate(education[:2]):
+                degree = edu.get('degree', 'N/A')
+                major = edu.get('major', edu.get('field', 'N/A'))
+                school = edu.get('university_name', edu.get('school', 'N/A'))
+                print(f"      {i+1}. {degree} in {major} from {school}")
+            if len(education) > 2:
+                print(f"      ... and {len(education) - 2} more")
+        else:
+            print("      (No education)")
+        
+        # Skills
+        skills = profile_data.get('skills', [])
+        print(f"\n  🛠️ SKILLS ({len(skills)} total):")
+        if skills:
+            skills_preview = ', '.join(skills[:10])
+            print(f"      {skills_preview}{'...' if len(skills) > 10 else ''}")
+        else:
+            print("      (No skills)")
+        
+        # Page content summary
+        print(f"\n  📄 PAGE CONTENT SUMMARY:")
+        print(f"      URL: {page_content.get('url', 'N/A')}")
+        print(f"      Title: {page_content.get('title', 'N/A')}")
+        print(f"      Inputs: {len(page_content.get('inputs', []))}")
+        print(f"      Buttons: {len(page_content.get('buttons', []))}")
+        print(f"      Forms: {len(page_content.get('forms', []))}")
+        
+        # Prompt preview
+        print(f"\n  📝 PROMPT LENGTH: {len(prompt):,} characters")
+        print(f"\n  📝 FULL PROMPT (for AI):")
+        print("-" * 80)
+        print(prompt)
+        print("-" * 80)
+        
+        print("\n" + "="*80)
+        print("  [END OPENAI REQUEST]")
+        print("="*80 + "\n")
+    
     def _build_prompt(
         self,
         page_content: Dict[str, Any],
@@ -453,6 +533,9 @@ class AIService:
             return AIAnalysisResult(error="OpenAI client not initialized")
         
         prompt = self._build_prompt(page_content, profile_data)
+        
+        # Log the prompt being sent to OpenAI
+        self._log_openai_request(page_content, profile_data, prompt)
         
         print(f"  [AI] Sending to OpenAI ({self.model})...")
         print(f"  [AI] Page has {len(page_content.get('inputs', []))} inputs, "

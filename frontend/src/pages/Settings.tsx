@@ -68,6 +68,7 @@ export default function Settings() {
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [activeTab, setActiveTab] = useState<'ai' | 'browser' | 'notifications' | 'system'>('ai')
+  const [isEditingApiKey, setIsEditingApiKey] = useState(false)
 
   // Fetch all settings on mount
   useEffect(() => {
@@ -149,6 +150,11 @@ export default function Settings() {
       if (result.success) {
         setConnectionStatus('success')
         toast.success(result.message)
+        
+        // Update available models from the API response
+        if (result.models && result.models.length > 0) {
+          setAiSettings(prev => prev ? { ...prev, available_models: result.models } : prev)
+        }
       } else {
         setConnectionStatus('error')
         toast.error(result.message)
@@ -303,36 +309,49 @@ export default function Settings() {
               </div>
             </div>
             <div className="p-5 space-y-5">
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <div className="lg:col-span-2">
                   <label className="label flex items-center gap-2">
                     <Key className="w-3.5 h-3.5 text-amber-400" />
                     API Key
-                    {aiSettings?.openai_api_key_masked && (
-                      <span className="ml-2 px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-xs rounded-full flex items-center gap-1">
-                        <CheckCircle className="w-3 h-3" />
-                        Saved
-                      </span>
-                    )}
                   </label>
-                  {aiSettings?.openai_api_key_masked && !aiSettingsForm.openai_api_key && (
-                    <div className="mb-2 px-3 py-2 bg-surface-800 border border-surface-700 rounded-lg text-sm font-mono text-surface-300">
-                      {aiSettings.openai_api_key_masked}
-                    </div>
-                  )}
                   <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={aiSettingsForm.openai_api_key || ''}
-                      onChange={(e) => setAiSettingsForm({ ...aiSettingsForm, openai_api_key: e.target.value })}
-                      placeholder={aiSettings?.openai_api_key_masked ? 'Enter new key to update...' : 'sk-...'}
-                      className="input flex-1"
-                    />
+                    {/* Display mode: Show API key as clickable text */}
+                    {!isEditingApiKey && aiSettings?.openai_api_key_masked ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditingApiKey(true)
+                          setAiSettingsForm({ ...aiSettingsForm, openai_api_key: '' })
+                        }}
+                        className="input flex-1 font-mono text-sm cursor-pointer hover:border-primary-500/50 hover:bg-surface-800/50 transition-all flex items-center text-left"
+                        title="Click to edit API key"
+                      >
+                        <span className="text-surface-300">{aiSettings.openai_api_key_masked}</span>
+                      </button>
+                    ) : (
+                      /* Edit mode: Show input field */
+                      <input
+                        type="text"
+                        autoFocus={isEditingApiKey}
+                        value={aiSettingsForm.openai_api_key || ''}
+                        onChange={(e) => setAiSettingsForm({ ...aiSettingsForm, openai_api_key: e.target.value })}
+                        onBlur={() => {
+                          // If user leaves input empty and there's an existing key, exit edit mode
+                          if (!aiSettingsForm.openai_api_key && aiSettings?.openai_api_key_masked) {
+                            setIsEditingApiKey(false)
+                            setAiSettingsForm({ ...aiSettingsForm, openai_api_key: undefined })
+                          }
+                        }}
+                        placeholder="sk-..."
+                        className="input flex-1 font-mono text-sm"
+                      />
+                    )}
                     <button
                       onClick={handleTestConnection}
                       disabled={testingConnection}
                       className={clsx(
-                        "btn-secondary px-3",
+                        "btn-secondary px-3 flex items-center gap-1.5",
                         connectionStatus === 'success' && "border-emerald-500 text-emerald-400",
                         connectionStatus === 'error' && "border-red-500 text-red-400"
                       )}
@@ -347,12 +366,52 @@ export default function Settings() {
                       ) : (
                         <Play className="w-4 h-4" />
                       )}
+                      <span className="text-xs">Test</span>
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (!aiSettingsForm.openai_api_key) return
+                        setIsSaving(true)
+                        try {
+                          const updated = await aiSettingsApi.update({ openai_api_key: aiSettingsForm.openai_api_key })
+                          setAiSettings(updated)
+                          setAiSettingsForm({ ...aiSettingsForm, openai_api_key: undefined })
+                          setIsEditingApiKey(false)
+                          toast.success('API key saved successfully')
+                        } catch {
+                          toast.error('Failed to save API key')
+                        } finally {
+                          setIsSaving(false)
+                        }
+                      }}
+                      disabled={!aiSettingsForm.openai_api_key || isSaving}
+                      className={clsx(
+                        "btn-primary px-3 flex items-center gap-1.5 transition-all",
+                        !aiSettingsForm.openai_api_key && "opacity-50 cursor-not-allowed"
+                      )}
+                      title="Save API Key"
+                    >
+                      {isSaving ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Save className="w-4 h-4" />
+                      )}
+                      <span className="text-xs">Save</span>
                     </button>
                   </div>
-                  <p className="text-xs text-surface-500 mt-1">
-                    {aiSettings?.openai_api_key_masked 
-                      ? 'Enter a new key to update, or leave empty to keep existing' 
-                      : 'Enter your OpenAI API key to enable AI features'}
+                  <p className="text-xs text-surface-500 mt-1 flex items-center gap-1.5">
+                    {aiSettings?.openai_api_key_masked && !isEditingApiKey ? (
+                      <>
+                        <CheckCircle className="w-3 h-3 text-emerald-400" />
+                        <span className="text-emerald-400">API key configured</span>
+                        <span className="text-surface-600">•</span>
+                        <span>Click to edit</span>
+                      </>
+                    ) : isEditingApiKey ? (
+                      'Enter new API key and click Save'
+                    ) : (
+                      'Enter your OpenAI API key to enable AI features'
+                    )}
                   </p>
                 </div>
                 <div>
@@ -361,33 +420,40 @@ export default function Settings() {
                     Model
                   </label>
                   <select
-                    value={aiSettingsForm.openai_model || 'gpt-4o'}
-                    onChange={(e) => setAiSettingsForm({ ...aiSettingsForm, openai_model: e.target.value })}
+                    value={aiSettingsForm.openai_model || aiSettings?.openai_model || 'gpt-4o'}
+                    onChange={async (e) => {
+                      const newModel = e.target.value
+                      setAiSettingsForm({ ...aiSettingsForm, openai_model: newModel })
+                      try {
+                        const updated = await aiSettingsApi.update({ openai_model: newModel })
+                        setAiSettings(updated)
+                        toast.success(`Model changed to ${newModel}`)
+                      } catch {
+                        toast.error('Failed to save model selection')
+                      }
+                    }}
                     className="input"
                   >
-                    <option value="gpt-4o">GPT-4o (Recommended)</option>
-                    <option value="gpt-4o-mini">GPT-4o Mini</option>
-                    <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                    <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                    {aiSettings?.available_models && aiSettings.available_models.length > 0 ? (
+                      aiSettings.available_models.map((model) => (
+                        <option key={model.id} value={model.id}>
+                          {model.id}
+                        </option>
+                      ))
+                    ) : (
+                      <>
+                        <option value="gpt-4o">gpt-4o</option>
+                        <option value="gpt-4o-mini">gpt-4o-mini</option>
+                        <option value="gpt-4-turbo">gpt-4-turbo</option>
+                        <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+                      </>
+                    )}
                   </select>
-                </div>
-                <div>
-                  <label className="label flex items-center gap-2">
-                    <Zap className="w-3.5 h-3.5 text-emerald-400" />
-                    Temperature
-                  </label>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.1}
-                      value={aiSettingsForm.temperature || 0.7}
-                      onChange={(e) => setAiSettingsForm({ ...aiSettingsForm, temperature: parseFloat(e.target.value) })}
-                      className="flex-1 h-2 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
-                    />
-                    <span className="text-sm font-medium text-white w-8">{aiSettingsForm.temperature || 0.7}</span>
-                  </div>
+                  {(!aiSettings?.available_models || aiSettings.available_models.length === 0) && (
+                    <p className="text-xs text-surface-500 mt-1">
+                      Test API connection to load available models
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -886,7 +952,7 @@ export default function Settings() {
                 </div>
                 <p className="text-xs text-surface-500 uppercase tracking-wider">Database</p>
               </div>
-              <p className="text-lg font-semibold text-white capitalize">{systemInfo?.database || 'SQLite'}</p>
+              <p className="text-lg font-semibold text-white capitalize">{systemInfo?.database || 'PostgreSQL'}</p>
             </div>
             <div className="card p-5">
               <div className="flex items-center gap-3 mb-3">

@@ -2,22 +2,33 @@
 Job Application System - Main FastAPI Application
 """
 
+import logging
 import os
+import sys
+import traceback
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
 from app.database import init_db
+from app.logging_config import setup_logging, get_logger
+
+# Configure logging FIRST before any other imports that might use logging
+setup_logging()
+
+logger = get_logger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan handler."""
-    print("Starting Job Application System...")
+    logger.info("Starting Job Application System...")
 
     # Ensure storage directories exist
     storage_dirs = ["resumes", "cover_letters", "screenshots", "logs", "work_documents"]
@@ -26,15 +37,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         os.makedirs(path, exist_ok=True)
 
     # Initialize database
-    await init_db()
-    print("Database initialized")
+    try:
+        await init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        logger.error(traceback.format_exc())
+        raise
 
-    print(f"Dashboard: http://localhost:{settings.api_port}")
-    print(f"API Docs: http://localhost:{settings.api_port}/docs")
+    logger.info(f"Dashboard: http://localhost:{settings.api_port}")
+    logger.info(f"API Docs: http://localhost:{settings.api_port}/docs")
 
     yield
 
-    print("Shutting down...")
+    logger.info("Shutting down...")
 
 
 # Create FastAPI application
@@ -47,6 +63,56 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+# HTTP Exception handler - logs 4xx and 5xx errors
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """
+    HTTP exception handler that logs client and server errors.
+    """
+    if exc.status_code >= 500:
+        logger.error(f"HTTP {exc.status_code} on {request.method} {request.url.path}: {exc.detail}")
+    elif exc.status_code >= 400:
+        logger.warning(f"HTTP {exc.status_code} on {request.method} {request.url.path}: {exc.detail}")
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
+
+
+# Global exception handler - catches ALL unhandled exceptions
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """
+    Global exception handler that logs all unhandled errors to the terminal.
+    """
+    # Log the full error with traceback
+    logger.error(f"Unhandled exception on {request.method} {request.url.path}")
+    logger.error(f"Exception type: {type(exc).__name__}")
+    logger.error(f"Exception message: {str(exc)}")
+    logger.error(f"Traceback:\n{traceback.format_exc()}")
+    
+    # Also print to stdout to ensure visibility
+    print(f"\n{'='*60}", file=sys.stderr)
+    print(f"UNHANDLED EXCEPTION: {type(exc).__name__}", file=sys.stderr)
+    print(f"Path: {request.method} {request.url.path}", file=sys.stderr)
+    print(f"Message: {str(exc)}", file=sys.stderr)
+    print(f"{'='*60}\n", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr)
+    sys.stderr.flush()
+    
+    # Return a proper error response
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error",
+            "error": str(exc) if settings.debug else "An unexpected error occurred",
+            "type": type(exc).__name__ if settings.debug else None,
+        }
+    )
+
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
@@ -55,6 +121,32 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Error logging middleware
+class ErrorLoggingMiddleware(BaseHTTPMiddleware):
+    """Middleware to log errors that occur during request processing."""
+    
+    async def dispatch(self, request: Request, call_next):
+        try:
+            response = await call_next(request)
+            
+            # Log server errors (5xx)
+            if response.status_code >= 500:
+                logger.error(
+                    f"Server error {response.status_code} on {request.method} {request.url.path}"
+                )
+            
+            return response
+        except Exception as e:
+            # Log the error
+            logger.error(f"Middleware caught error on {request.method} {request.url.path}")
+            logger.error(f"Error: {type(e).__name__}: {str(e)}")
+            logger.error(f"Traceback:\n{traceback.format_exc()}")
+            raise
+
+
+app.add_middleware(ErrorLoggingMiddleware)
 
 # Import routes
 from app.api.routes import profiles, jobs, dashboard, applications, ai_settings

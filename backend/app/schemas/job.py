@@ -2,13 +2,29 @@
 Job Application Schemas for API Validation
 """
 
+import json
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.models.job import JobStatus
+
+
+def _parse_json_or_dict(value: Any) -> dict:
+    """Parse a value that could be a dict, a JSON string, or None."""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
 
 
 class JobBase(BaseModel):
@@ -71,6 +87,14 @@ class JobLogResponse(BaseModel):
     screenshot_path: Optional[str] = None
     created_at: datetime
 
+    # Validator to handle string-encoded JSON from database
+    @field_validator('details', mode='before')
+    @classmethod
+    def parse_details(cls, v: Any) -> Optional[dict]:
+        if v is None:
+            return None
+        return _parse_json_or_dict(v)
+
     class Config:
         from_attributes = True
 
@@ -97,6 +121,14 @@ class JobResponse(BaseModel):
     updated_at: datetime
     started_at: Optional[datetime] = None
     applied_at: Optional[datetime] = None
+
+    # Validator to handle string-encoded JSON from database
+    @field_validator('extra_data', mode='before')
+    @classmethod
+    def parse_extra_data(cls, v: Any) -> Optional[dict]:
+        if v is None:
+            return None
+        return _parse_json_or_dict(v)
 
     class Config:
         from_attributes = True

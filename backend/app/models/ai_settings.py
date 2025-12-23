@@ -37,6 +37,13 @@ class AISettings(Base):
     temperature: Mapped[float] = mapped_column(Float, default=0.7)
     max_tokens: Mapped[int] = mapped_column(Integer, default=2000)
     
+    # Available models fetched from OpenAI API
+    available_models: Mapped[Optional[list]] = mapped_column(
+        JSON,
+        default=list,
+        nullable=True,
+    )
+    
     # AI Feature Toggles
     enable_resume_generation: Mapped[bool] = mapped_column(Boolean, default=True)
     enable_cover_letter_generation: Mapped[bool] = mapped_column(Boolean, default=True)

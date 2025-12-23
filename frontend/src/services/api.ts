@@ -545,6 +545,12 @@ export const applicationApi = {
 // AI SETTINGS TYPES
 // ============================================
 
+export interface AvailableModel {
+  id: string
+  name: string
+  created?: number
+}
+
 export interface AISettings {
   id: string
   
@@ -553,6 +559,7 @@ export interface AISettings {
   openai_model: string
   temperature: number
   max_tokens: number
+  available_models: AvailableModel[]
   
   // Feature Toggles
   enable_resume_generation: boolean
@@ -671,6 +678,7 @@ export const aiSettingsApi = {
       message: string
       model?: string
       response?: string
+      models: AvailableModel[]
     }>('/ai-settings/test-connection')
     return data
   },

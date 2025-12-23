@@ -118,13 +118,14 @@ async def reset_prompts_to_defaults(
 async def test_ai_connection(
     db: AsyncSession = Depends(get_db),
 ):
-    """Test the OpenAI API connection."""
+    """Test the OpenAI API connection and fetch available models."""
     settings = await get_or_create_settings(db)
     
     if not settings.openai_api_key:
         return {
             "success": False,
             "message": "No API key configured",
+            "models": [],
         }
     
     try:
@@ -132,23 +133,57 @@ async def test_ai_connection(
         
         client = OpenAI(api_key=settings.openai_api_key)
         
-        # Simple test call
+        # Fetch available models from OpenAI
+        models_response = client.models.list()
+        
+        # Filter to only include GPT chat models (exclude embeddings, whisper, dall-e, etc.)
+        chat_model_prefixes = ("gpt-4", "gpt-3.5", "o1", "o3")
+        excluded_keywords = ("instruct", "vision", "audio", "realtime")
+        
+        available_models = []
+        for model in models_response.data:
+            model_id = model.id.lower()
+            # Include only chat models
+            if any(model_id.startswith(prefix) for prefix in chat_model_prefixes):
+                # Exclude non-chat variants
+                if not any(kw in model_id for kw in excluded_keywords):
+                    available_models.append({
+                        "id": model.id,
+                        "name": model.id,
+                        "created": model.created,
+                    })
+        
+        # Sort by creation date (newest first) and then by name
+        available_models.sort(key=lambda x: (-x.get("created", 0), x["id"]))
+        
+        # Save available models to database
+        settings.available_models = available_models
+        await db.flush()
+        await db.refresh(settings)
+        
+        # Test with a simple API call using the current model or first available
+        test_model = settings.openai_model
+        if available_models and test_model not in [m["id"] for m in available_models]:
+            test_model = available_models[0]["id"]
+        
         response = client.chat.completions.create(
-            model=settings.openai_model,
-            messages=[{"role": "user", "content": "Say 'API connection successful' in exactly those words."}],
-            max_tokens=20,
+            model=test_model,
+            messages=[{"role": "user", "content": "Say 'OK'"}],
+            max_tokens=5,
         )
         
         return {
             "success": True,
-            "message": "API connection successful",
-            "model": settings.openai_model,
+            "message": f"API connection successful. Found {len(available_models)} available models.",
+            "model": test_model,
             "response": response.choices[0].message.content,
+            "models": available_models,
         }
         
     except Exception as e:
         return {
             "success": False,
             "message": str(e),
+            "models": [],
         }
 

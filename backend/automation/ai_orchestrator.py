@@ -219,51 +219,99 @@ class AIOrchestrator:
         session = None
         keep_browser_open = False
         
+        # ============================================
+        # STEP 1: Validate Profile Data
+        # ============================================
+        print(f"\n{'='*70}")
+        print(f"[{short_id}] STARTING JOB PROCESSING")
+        print(f"{'='*70}")
+        print(f"[{short_id}] Job ID: {job_id}")
+        print(f"[{short_id}] URL: {url}")
+        print(f"[{short_id}] Profile ID: {profile_id}")
+        
         profile_data = self._profiles_cache.get(profile_id, {})
         if not profile_data:
+            print(f"[{short_id}] ERROR: Profile data not found in cache!")
+            print(f"[{short_id}] Available profiles: {list(self._profiles_cache.keys())}")
             return JobProcessingResult(
                 job_id=job_id,
                 success=False,
                 error="Profile data not found",
             )
         
+        print(f"[{short_id}] ✓ Profile loaded: {profile_data.get('first_name', '?')} {profile_data.get('last_name', '?')}")
+        print(f"[{short_id}]   Email: {profile_data.get('email', 'N/A')}")
+        print(f"[{short_id}]   Work Experience: {len(profile_data.get('work_experience', []))} entries")
+        print(f"[{short_id}]   Education: {len(profile_data.get('education', []))} entries")
+        print(f"[{short_id}]   Skills: {len(profile_data.get('skills', []))} skills")
+        
+        # ============================================
+        # STEP 2: Validate AI Service
+        # ============================================
         if not self._ai_service:
+            print(f"[{short_id}] ERROR: AI service not configured!")
             return JobProcessingResult(
                 job_id=job_id,
                 success=False,
                 error="AI service not configured",
             )
         
+        print(f"[{short_id}] ✓ AI service configured (model: {self._ai_service.model})")
+        
+        # ============================================
+        # STEP 3: Create Browser Session
+        # ============================================
         try:
-            print(f"[{short_id}] Creating browser for autofill...")
+            print(f"\n[{short_id}] STEP 3: Creating browser session...")
             session = self.browser_manager._acquire_session_sync(job_id)
             
             if not session:
+                print(f"[{short_id}] ERROR: Failed to create browser session!")
                 return JobProcessingResult(
                     job_id=job_id,
                     success=False,
                     error="Failed to create browser",
                 )
             
-            self.storage.create_session(job_id, profile_id, url)
+            print(f"[{short_id}] ✓ Browser session created: {session.session_id[:8]}...")
             
-            print(f"[{short_id}] Navigating to: {url[:50]}...", flush=True)
+            # ============================================
+            # STEP 4: Create Storage Session
+            # ============================================
+            print(f"\n[{short_id}] STEP 4: Creating storage session...")
+            self.storage.create_session(job_id, profile_id, url)
+            print(f"[{short_id}] ✓ Storage session created")
+            
+            # ============================================
+            # STEP 5: Navigate to URL
+            # ============================================
+            print(f"\n[{short_id}] STEP 5: Navigating to URL...")
+            print(f"[{short_id}] Target URL: {url}", flush=True)
             page = session.page
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            print(f"[{short_id}] ✓ DOM content loaded")
             
             # Wait for dynamic content to load
-            print(f"[{short_id}] Waiting for page to fully load...", flush=True)
+            print(f"[{short_id}] Waiting for network idle...", flush=True)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
-            except Exception:
-                pass  # Some pages never reach networkidle
+                print(f"[{short_id}] ✓ Network idle reached")
+            except Exception as e:
+                print(f"[{short_id}] ⚠ Network idle timeout (page may still be loading): {e}")
             
             # Additional wait for JavaScript to execute
             import time
+            print(f"[{short_id}] Waiting 2s for JavaScript execution...")
             time.sleep(2)
             
-            print(f"[{short_id}] Page loaded: {page.title[:50] if page.title else 'No title'}...", flush=True)
+            print(f"\n[{short_id}] ✓ PAGE LOADED SUCCESSFULLY")
+            print(f"[{short_id}]   Current URL: {page.url}")
+            print(f"[{short_id}]   Page Title: {page.title if page.title else 'No title'}", flush=True)
             
+            # ============================================
+            # STEP 6: Create FormFiller
+            # ============================================
+            print(f"\n[{short_id}] STEP 6: Initializing FormFiller...")
             form_filler = FormFiller(
                 driver=session.driver,
                 ai_service=self._ai_service,
@@ -271,8 +319,18 @@ class AIOrchestrator:
                 job_id=job_id,
                 storage=self.storage,
             )
+            print(f"[{short_id}] ✓ FormFiller initialized")
             
-            print(f"[{short_id}] Processing application...")
+            # ============================================
+            # STEP 7: Process Application (Extract → AI → Fill)
+            # ============================================
+            print(f"\n[{short_id}] STEP 7: Processing application...")
+            print(f"[{short_id}] This step will:")
+            print(f"[{short_id}]   1. Extract page content (inputs, buttons, forms)")
+            print(f"[{short_id}]   2. Filter HTML and prepare for AI")
+            print(f"[{short_id}]   3. Send to OpenAI for field mapping")
+            print(f"[{short_id}]   4. Execute autofill commands")
+            print(f"[{short_id}]   5. Handle navigation (next/submit buttons)")
             fill_result = form_filler.process_application(page)
             
             is_completed = fill_result.success and fill_result.submit_ready and not fill_result.captcha_detected

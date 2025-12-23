@@ -54,6 +54,7 @@ def build_ai_settings_response(settings: AISettings):
         openai_model=settings.openai_model,
         temperature=settings.temperature,
         max_tokens=settings.max_tokens,
+        available_models=settings.available_models or [],
         enable_resume_generation=settings.enable_resume_generation,
         enable_cover_letter_generation=settings.enable_cover_letter_generation,
         enable_answer_generation=settings.enable_answer_generation,

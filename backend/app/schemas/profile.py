@@ -2,10 +2,11 @@
 Profile Schemas for API Validation
 """
 
+import json
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class DocumentContent(BaseModel):
@@ -161,6 +162,36 @@ class ProfileUpdate(BaseModel):
     salary_currency: Optional[str] = None
 
 
+def _parse_json_or_list(value: Any) -> list:
+    """Parse a value that could be a list, a JSON string, or None."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except (json.JSONDecodeError, TypeError):
+            return []
+    return []
+
+
+def _parse_json_or_dict(value: Any) -> dict:
+    """Parse a value that could be a dict, a JSON string, or None."""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
 class ProfileResponse(BaseModel):
     """Schema for profile response."""
 
@@ -227,6 +258,18 @@ class ProfileResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # Validators to handle string-encoded JSON from database
+    @field_validator('work_experience', 'education', 'skills', 'key_achievements', 
+                     'priority_skills', 'target_industries', 'target_roles', mode='before')
+    @classmethod
+    def parse_list_fields(cls, v: Any) -> list:
+        return _parse_json_or_list(v)
+    
+    @field_validator('custom_fields', 'custom_question_answers', mode='before')
+    @classmethod
+    def parse_dict_fields(cls, v: Any) -> dict:
+        return _parse_json_or_dict(v)
+
     class Config:
         from_attributes = True
 
@@ -276,6 +319,18 @@ class ProfileInternalResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+
+    # Validators to handle string-encoded JSON from database
+    @field_validator('work_experience', 'education', 'skills', 'key_achievements', 
+                     'priority_skills', 'target_industries', 'target_roles', mode='before')
+    @classmethod
+    def parse_list_fields(cls, v: Any) -> list:
+        return _parse_json_or_list(v)
+    
+    @field_validator('custom_fields', 'custom_question_answers', mode='before')
+    @classmethod
+    def parse_dict_fields(cls, v: Any) -> dict:
+        return _parse_json_or_dict(v)
 
     class Config:
         from_attributes = True

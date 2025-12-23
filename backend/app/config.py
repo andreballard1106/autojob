@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # Application
     app_name: str = "Job Application System"
     debug: bool = True
+    sql_echo: bool = False  # Set to True to log all SQL queries (verbose)
     api_port: int = 8000
     frontend_url: str = "http://localhost:5173"
 

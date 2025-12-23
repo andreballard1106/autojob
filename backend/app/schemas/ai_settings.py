@@ -2,10 +2,26 @@
 AI Settings Schemas for API Validation
 """
 
+import json
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+
+def _parse_json_or_dict(value: Any) -> dict:
+    """Parse a value that could be a dict, a JSON string, or None."""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
 
 
 class AISettingsUpdate(BaseModel):
@@ -63,6 +79,9 @@ class AISettingsPublicResponse(BaseModel):
     temperature: float
     max_tokens: int
     
+    # Available models from OpenAI
+    available_models: list = []
+    
     # Feature Toggles
     enable_resume_generation: bool
     enable_cover_letter_generation: bool
@@ -99,6 +118,12 @@ class AISettingsPublicResponse(BaseModel):
     
     created_at: datetime
     updated_at: datetime
+
+    # Validators to handle string-encoded JSON from database
+    @field_validator('question_prompts', 'default_answers', mode='before')
+    @classmethod
+    def parse_dict_fields(cls, v: Any) -> dict:
+        return _parse_json_or_dict(v)
 
     class Config:
         from_attributes = True

@@ -1,0 +1,168 @@
+# ============================================
+# Automated Job Application System - Git Ignore
+# ============================================
+
+# ============================================
+# Environment & Secrets
+# ============================================
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+secrets/
+
+# ============================================
+# Python
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+pytest_cache/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ============================================
+# Node.js / Frontend
+# ============================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Vite
+*.local
+
+# ============================================
+# IDEs and Editors
+# ============================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# ============================================
+# OS Files
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ============================================
+# Application Specific
+# ============================================
+# Storage directories (keep structure, ignore contents)
+storage/resumes/*
+storage/cover_letters/*
+storage/screenshots/*
+storage/logs/*
+storage/notifications/*
+storage/sessions/*
+!storage/resumes/.gitkeep
+!storage/cover_letters/.gitkeep
+!storage/screenshots/.gitkeep
+!storage/logs/.gitkeep
+!storage/notifications/.gitkeep
+!storage/sessions/.gitkeep
+
+# Database files (using PostgreSQL now)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Windows artifacts
+nul
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# ============================================
+# Docker
+# ============================================
+docker-compose.override.yml
+
+# ============================================
+# Playwright
+# ============================================
+playwright-report/
+playwright/.cache/
+test-results/
+
+# ============================================
+# Temporary Files
+# ============================================
+*.tmp
+*.temp
+*.bak
+*.log
+logs/
+

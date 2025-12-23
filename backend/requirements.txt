@@ -1,0 +1,38 @@
+# Job Application System - Python Dependencies
+# For best compatibility, use Python 3.11 or 3.12
+
+# Web Framework
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+
+# Database (PostgreSQL)
+sqlalchemy>=2.0.0
+asyncpg>=0.29.0
+psycopg2-binary>=2.9.0
+alembic>=1.13.0
+
+# Validation & Settings
+pydantic>=2.6.0
+pydantic-settings>=2.2.0
+email-validator>=2.1.0
+
+# Browser Automation (Selenium)
+selenium>=4.15.0
+webdriver-manager>=4.0.0
+
+# AI Cover Letters
+openai>=1.12.0
+
+# Utilities
+python-dotenv>=1.0.0
+
+# Document Parsing
+PyPDF2>=3.0.0
+python-docx>=1.1.0
+chardet>=5.2.0
+docx2pdf>=0.1.8
+
+# Optional - Install separately if needed:
+# pip install celery[redis] redis  # For background jobs
+# pip install aiosmtplib           # For email notifications

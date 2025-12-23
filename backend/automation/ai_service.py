@@ -116,7 +116,7 @@ SYSTEM_PROMPT = """You are an AI that analyzes job application web pages and gen
 
 Your task:
 1. Analyze the page inputs and buttons
-2. Match inputs to user profile data
+2. Match inputs to user profile data (including file uploads for resume/cover letter)
 3. Generate EXACT autofill commands for a Selenium-based framework
 4. Identify Next/Continue and Submit buttons
 
@@ -154,8 +154,22 @@ Each command MUST have this structure:
 6. enter_date - Date inputs
    Required: selector, value (format: "YYYY-MM-DD")
 
-7. click - Click a button/link (for navigation)
+7. upload_file - File input for resume, cover letter, documents
+   Required: selector, file_path (the absolute path to the file)
+   Use this for input[type='file'] elements
+   IMPORTANT: Match resume file inputs to the user's resume_path
+   IMPORTANT: Match cover letter file inputs to cover_letter_template_path
+
+8. click - Click a button/link (for navigation)
    Required: selector
+
+=== FILE UPLOAD RULES ===
+
+When you see input[type='file'] or file upload elements:
+- For RESUME uploads: Use "upload_file" action with the user's resume_path
+- For COVER LETTER uploads: Use "upload_file" action with the user's cover_letter_template_path
+- If the file path is provided in profile data, ALWAYS generate the upload_file command
+- DO NOT put file uploads in unmapped_fields if a file path is available
 
 === SELECTOR RULES ===
 
@@ -163,8 +177,8 @@ Use CSS selectors. Priority:
 1. ID: "#elementId"
 2. Name: "[name='fieldName']" 
 3. Data attrs: "[data-automation-id='value']", "[data-testid='value']"
-4. Type+Name: "input[type='email'][name='email']"
-5. Aria: "[aria-label='Email']"
+4. Type+Name: "input[type='file'][name='resume']"
+5. Aria: "[aria-label='Upload Resume']"
 
 selector_type is always "css" unless absolutely necessary to use "xpath".
 
@@ -183,6 +197,14 @@ selector_type is always "css" unless absolutely necessary to use "xpath".
             "selector_type": "css",
             "value": "John",
             "field_name": "First Name",
+            "confidence": 1.0
+        },
+        {
+            "action": "upload_file",
+            "selector": "input[type='file'][name='resume']",
+            "selector_type": "css",
+            "file_path": "/path/to/resume.pdf",
+            "field_name": "Resume Upload",
             "confidence": 1.0
         },
         {
@@ -214,7 +236,7 @@ selector_type is always "css" unless absolutely necessary to use "xpath".
     
     "navigation_commands": [],
     
-    "unmapped_fields": ["Resume Upload", "Cover Letter", "How did you hear about us?"]
+    "unmapped_fields": ["How did you hear about us?", "Referral Code"]
 }
 
 === PAGE TYPES ===
@@ -232,10 +254,11 @@ selector_type is always "css" unless absolutely necessary to use "xpath".
 3. For dropdowns, value is the VISIBLE TEXT of the option
 4. Always identify Next/Continue buttons as next_button
 5. Always identify Submit/Apply buttons as submit_button  
-6. File upload fields go in unmapped_fields (cannot auto-fill)
+6. For file upload inputs (resume, cover letter): Use upload_file action with the provided file path
 7. Return VALID JSON only - no markdown, no comments
 8. If page needs login or navigation first, set needs_navigation=true
-9. Set confidence based on how sure you are about the match"""
+9. Set confidence based on how sure you are about the match
+10. Only put fields in unmapped_fields if NO matching profile data exists"""
 
 
 class AIService:
@@ -308,6 +331,31 @@ class AIService:
         else:
             print("      (No skills)")
         
+        # File paths
+        resume_path = profile_data.get('resume_path')
+        cover_letter_path = profile_data.get('cover_letter_template_path')
+        print(f"\n  📎 FILE PATHS:")
+        print(f"      Resume: {resume_path or '(not provided)'}")
+        print(f"      Cover Letter: {cover_letter_path or '(not provided)'}")
+        
+        # Demographics
+        gender = profile_data.get('gender')
+        nationality = profile_data.get('nationality')
+        veteran = profile_data.get('veteran_status')
+        disability = profile_data.get('disability_status')
+        print(f"\n  👤 DEMOGRAPHICS:")
+        print(f"      Gender: {gender or '(not set)'}")
+        print(f"      Nationality: {nationality or '(not set)'}")
+        print(f"      Veteran: {veteran or '(not set)'}")
+        print(f"      Disability: {disability or '(not set)'}")
+        
+        # Salary
+        salary_min = profile_data.get('salary_min')
+        salary_max = profile_data.get('salary_max')
+        if salary_min or salary_max:
+            print(f"\n  💰 SALARY EXPECTATIONS:")
+            print(f"      Range: {profile_data.get('salary_currency', 'USD')} {salary_min or 'N/A'} - {salary_max or 'N/A'}")
+        
         # Page content summary
         print(f"\n  📄 PAGE CONTENT SUMMARY:")
         print(f"      URL: {page_content.get('url', 'N/A')}")
@@ -351,6 +399,10 @@ class AIService:
                 inp_type = inp.get('type', '')
                 parts.append(f"<{tag}" + (f" type='{inp_type}'" if inp_type else "") + ">")
                 
+                # Mark file inputs clearly for resume/cover letter uploads
+                if inp_type == 'file':
+                    parts.append("[FILE UPLOAD - use 'upload_file' action]")
+                
                 if inp.get('id'):
                     parts.append(f"id='{inp['id']}'")
                 if inp.get('name'):
@@ -391,8 +443,12 @@ class AIService:
         lines.append(f"First Name: {profile_data.get('first_name', '')}")
         lines.append(f"Middle Name: {profile_data.get('middle_name', '')}")
         lines.append(f"Last Name: {profile_data.get('last_name', '')}")
+        if profile_data.get('preferred_first_name'):
+            lines.append(f"Preferred First Name: {profile_data['preferred_first_name']}")
         lines.append(f"Email: {profile_data.get('email', '')}")
         lines.append(f"Phone: {profile_data.get('phone', '')}")
+        if profile_data.get('preferred_password'):
+            lines.append(f"Preferred Password (for account creation): {profile_data['preferred_password']}")
         
         if profile_data.get('address_1'):
             lines.append(f"Address Line 1: {profile_data['address_1']}")
@@ -400,6 +456,8 @@ class AIService:
             lines.append(f"Address Line 2: {profile_data['address_2']}")
         if profile_data.get('city'):
             lines.append(f"City: {profile_data['city']}")
+        if profile_data.get('county'):
+            lines.append(f"County: {profile_data['county']}")
         if profile_data.get('state'):
             lines.append(f"State/Province: {profile_data['state']}")
         if profile_data.get('zip_code'):
@@ -413,6 +471,22 @@ class AIService:
             lines.append(f"GitHub URL: {profile_data['github_url']}")
         if profile_data.get('portfolio_url'):
             lines.append(f"Portfolio URL: {profile_data['portfolio_url']}")
+        
+        # Demographics for EEO/voluntary disclosure questions
+        if profile_data.get('gender'):
+            lines.append(f"Gender: {profile_data['gender']}")
+        if profile_data.get('nationality'):
+            lines.append(f"Nationality: {profile_data['nationality']}")
+        if profile_data.get('veteran_status'):
+            lines.append(f"Veteran Status: {profile_data['veteran_status']}")
+        if profile_data.get('disability_status'):
+            lines.append(f"Disability Status: {profile_data['disability_status']}")
+        if profile_data.get('willing_to_travel') is not None:
+            lines.append(f"Willing to Travel: {'Yes' if profile_data['willing_to_travel'] else 'No'}")
+        if profile_data.get('willing_to_relocate') is not None:
+            lines.append(f"Willing to Relocate: {'Yes' if profile_data['willing_to_relocate'] else 'No'}")
+        if profile_data.get('primary_language'):
+            lines.append(f"Primary Language: {profile_data['primary_language']}")
         
         work_exp = profile_data.get('work_experience', [])
         if work_exp:
@@ -437,8 +511,47 @@ class AIService:
         if skills:
             lines.append(f"\nSkills: {', '.join(skills[:15])}")
         
+        # Salary expectations
+        salary_min = profile_data.get('salary_min')
+        salary_max = profile_data.get('salary_max')
+        salary_currency = profile_data.get('salary_currency', 'USD')
+        if salary_min or salary_max:
+            lines.append("\nSalary Expectations:")
+            if salary_min and salary_max:
+                lines.append(f"  Range: {salary_currency} {salary_min:,} - {salary_max:,}")
+            elif salary_min:
+                lines.append(f"  Minimum: {salary_currency} {salary_min:,}")
+            elif salary_max:
+                lines.append(f"  Maximum: {salary_currency} {salary_max:,}")
+        
+        # Custom question answers (pre-defined answers for common questions)
+        custom_answers = profile_data.get('custom_question_answers', {})
+        if custom_answers:
+            lines.append("\nPre-defined Answers for Common Questions:")
+            for question, answer in list(custom_answers.items())[:10]:
+                lines.append(f"  Q: {question}")
+                lines.append(f"  A: {answer}")
+        
+        # File paths for uploads - CRITICAL for resume/cover letter fields
+        lines.append("\n=== FILE PATHS FOR UPLOAD ===")
+        resume_path = profile_data.get('resume_path')
+        cover_letter_path = profile_data.get('cover_letter_template_path')
+        
+        if resume_path:
+            lines.append(f"Resume File Path: {resume_path}")
+            lines.append("  -> Use this path for any resume/CV file upload field with action 'upload_file'")
+        else:
+            lines.append("Resume File Path: (not provided)")
+        
+        if cover_letter_path:
+            lines.append(f"Cover Letter File Path: {cover_letter_path}")
+            lines.append("  -> Use this path for any cover letter file upload field with action 'upload_file'")
+        else:
+            lines.append("Cover Letter File Path: (not provided)")
+        
         lines.append("\n=== TASK ===")
         lines.append("Generate autofill commands to fill this form with the profile data.")
+        lines.append("For input[type='file'] fields: Use 'upload_file' action with the provided file paths.")
         lines.append("Identify the Next/Continue button and Submit button if present.")
         lines.append("Return valid JSON matching the required format.")
         
@@ -583,7 +696,7 @@ class AIService:
         self,
         page_content: Dict[str, Any],
         profile_data: Dict[str, Any],
-    ) -> "AIFormFillingResponse":
+    ) -> Any:
         """
         Legacy method for backward compatibility.
         Converts AIAnalysisResult to AIFormFillingResponse format.
@@ -602,18 +715,25 @@ class AIService:
             confidence: float = 1.0
             select_by: str = "text"
             checked: bool = True
+            file_path: Optional[str] = None  # For upload_file action
             
             def to_autofill_command(self) -> Dict[str, Any]:
                 cmd = {
                     "action": self.action,
                     "selector": self.selector,
                     "selector_type": self.selector_type,
-                    "value": self.value,
                 }
-                if self.action == "select_option":
+                if self.action == "upload_file":
+                    cmd["file_path"] = self.file_path
+                elif self.action in ["type_text", "type_number", "enter_date"]:
+                    cmd["value"] = self.value
+                elif self.action == "select_option":
+                    cmd["value"] = self.value
                     cmd["select_by"] = self.select_by
                 elif self.action == "check":
                     cmd["checked"] = self.checked
+                elif self.action == "select_radio":
+                    cmd["value"] = self.value
                 return cmd
         
         @dc  
@@ -660,6 +780,7 @@ class AIService:
                 confidence=cmd.confidence,
                 select_by=cmd.select_by,
                 checked=cmd.checked,
+                file_path=cmd.file_path,  # Include file_path for upload_file action
             ))
         
         nav_actions = []

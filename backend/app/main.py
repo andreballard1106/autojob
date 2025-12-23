@@ -164,6 +164,11 @@ app.include_router(websocket_router)
 if os.path.exists(settings.storage_path):
     app.mount("/storage", StaticFiles(directory=settings.storage_path), name="storage")
 
+# Mount static files for testing
+static_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+if os.path.exists(static_path):
+    app.mount("/static", StaticFiles(directory=static_path), name="static")
+
 
 @app.get("/")
 async def root():

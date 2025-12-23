@@ -182,7 +182,12 @@ class FormFiller:
         for mapping in ai_response.field_mappings:
             cmd = mapping.to_autofill_command()
             commands.append(cmd)
-            print(f"       - {mapping.field_name}: {mapping.action} -> {mapping.selector[:50]}")
+            # Show file path for upload_file actions
+            if mapping.action == "upload_file" and hasattr(mapping, 'file_path') and mapping.file_path:
+                print(f"       - {mapping.field_name}: {mapping.action} -> {mapping.selector[:50]}")
+                print(f"         FILE: {mapping.file_path}")
+            else:
+                print(f"       - {mapping.field_name}: {mapping.action} -> {mapping.selector[:50]}")
         
         results = self.autofill_engine.execute_all(commands)
         

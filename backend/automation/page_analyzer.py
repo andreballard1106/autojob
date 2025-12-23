@@ -197,7 +197,10 @@ EXTRACT_JS = """
             
             const type = el.type || '';
             if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type)) return;
-            if (!isVisible(el)) return;
+            
+            // File inputs are often hidden for styling but still important for automation
+            const isFileInput = type === 'file';
+            if (!isFileInput && !isVisible(el)) return;
             
             const inputData = {
                 tag: tag,

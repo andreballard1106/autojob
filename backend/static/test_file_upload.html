@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Upload Test - Job Application Form</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"],
+        input[type="email"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        input[type="file"] {
+            margin-top: 5px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f0f0f0;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Job Application Form</h1>
+    <p>Test page for file upload automation</p>
+    
+    <form id="applicationForm">
+        <div class="form-group">
+            <label for="firstName">First Name *</label>
+            <input type="text" id="firstName" name="firstName" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="lastName">Last Name *</label>
+            <input type="text" id="lastName" name="lastName" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="email">Email *</label>
+            <input type="email" id="email" name="email" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="resume">Upload Resume (PDF, DOC) *</label>
+            <input type="file" id="resume" name="resume" accept=".pdf,.doc,.docx" data-automation-id="resume-upload" required>
+        </div>
+        
+        <div class="form-group">
+            <label for="coverLetter">Upload Cover Letter (Optional)</label>
+            <input type="file" id="coverLetter" name="coverLetter" accept=".pdf,.doc,.docx" data-automation-id="cover-letter-upload">
+        </div>
+        
+        <button type="submit" id="submitBtn" data-automation-id="submit-application">Submit Application</button>
+    </form>
+    
+    <div id="result" class="result" style="display: none;">
+        <h3>Submission Result</h3>
+        <pre id="resultData"></pre>
+    </div>
+    
+    <script>
+        document.getElementById('applicationForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const data = {};
+            
+            for (let [key, value] of formData.entries()) {
+                if (value instanceof File) {
+                    data[key] = {
+                        name: value.name,
+                        size: value.size,
+                        type: value.type
+                    };
+                } else {
+                    data[key] = value;
+                }
+            }
+            
+            document.getElementById('result').style.display = 'block';
+            document.getElementById('resultData').textContent = JSON.stringify(data, null, 2);
+        });
+    </script>
+</body>
+</html>
+

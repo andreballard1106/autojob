@@ -297,23 +297,47 @@ async def _process_jobs_parallel(job_ids: list[str], max_concurrent: int):
                 if profile:
                     profiles_data[pid] = {
                         "id": profile.id,
+                        # Basic info
                         "first_name": profile.first_name,
                         "middle_name": profile.middle_name,
                         "last_name": profile.last_name,
+                        "preferred_first_name": profile.preferred_first_name,
                         "email": profile.email,
                         "phone": profile.phone,
+                        "preferred_password": profile.preferred_password,  # For account creation forms
+                        # Address
                         "address_1": profile.address_1,
                         "address_2": profile.address_2,
                         "city": profile.city,
+                        "county": profile.county,
                         "state": profile.state,
                         "country": profile.country,
                         "zip_code": profile.zip_code,
+                        # Online presence
                         "linkedin_url": profile.linkedin_url,
                         "github_url": profile.github_url,
                         "portfolio_url": profile.portfolio_url,
+                        # Demographics
+                        "gender": profile.gender,
+                        "nationality": profile.nationality,
+                        "veteran_status": profile.veteran_status,
+                        "disability_status": profile.disability_status,
+                        "willing_to_travel": profile.willing_to_travel,
+                        "willing_to_relocate": profile.willing_to_relocate,
+                        "primary_language": profile.primary_language,
+                        # Experience & education
                         "work_experience": profile.work_experience or [],
                         "education": profile.education or [],
                         "skills": profile.skills or [],
+                        # File paths for uploads
+                        "resume_path": profile.resume_path,
+                        "cover_letter_template_path": profile.cover_letter_template_path,
+                        # Salary expectations
+                        "salary_min": profile.salary_min,
+                        "salary_max": profile.salary_max,
+                        "salary_currency": profile.salary_currency,
+                        # Custom answers
+                        "custom_question_answers": profile.custom_question_answers or {},
                     }
             
             print(f"[PARALLEL] Loaded {len(profiles_data)} profiles", flush=True)

@@ -1,5 +1,5 @@
 {
-  "job_id": "df638a57-e65c-4756-81ec-a170ad7c90bd",
+  "job_id": "ad563122-333c-412b-abb4-6c584c0780fc",
   "profile_id": "7c9a0092-5e7e-45df-8e0b-06266715814c",
   "url": "https://jobs.micro1.ai/post/33ac3e3b-17f1-4a1c-981d-f9397e004c1f",
   "status": "completed",
@@ -79,6 +79,20 @@
           "tag": "input",
           "type": "text",
           "value": ""
+        },
+        {
+          "aria-label": "",
+          "autocomplete": "",
+          "data-automation-id": "",
+          "data-testid": "",
+          "id": "file",
+          "label": "Click to upload or drag & drop (.pdf)",
+          "name": "file",
+          "placeholder": "",
+          "required": false,
+          "tag": "input",
+          "type": "file",
+          "value": ""
         }
       ],
       "buttons": [
@@ -115,7 +129,7 @@
           "name": ""
         }
       ],
-      "timestamp": "2025-12-23T06:06:29.671260+00:00",
+      "timestamp": "2025-12-23T12:22:45.381477+00:00",
       "page_number": 1
     }
   ],
@@ -127,7 +141,7 @@
       "value": "Andre",
       "success": true,
       "error": null,
-      "duration_ms": 532
+      "duration_ms": 554
     },
     {
       "field_name": "Last Name",
@@ -136,16 +150,25 @@
       "value": "Ballard",
       "success": true,
       "error": null,
-      "duration_ms": 492
+      "duration_ms": 504
     },
     {
-      "field_name": "Email",
+      "field_name": "Email Address",
       "selector": "[name='email_id']",
       "action": "type_text",
       "value": "andre.ballard.1106@gmail.com",
       "success": true,
       "error": null,
-      "duration_ms": 550
+      "duration_ms": 528
+    },
+    {
+      "field_name": "Phone Number",
+      "selector": "input[type='tel']",
+      "action": "type_text",
+      "value": "13463556083",
+      "success": true,
+      "error": null,
+      "duration_ms": 669
     },
     {
       "field_name": "LinkedIn URL",
@@ -154,13 +177,22 @@
       "value": "https://www.linkedin.com/in/andre-ballard-aa45a16b/",
       "success": true,
       "error": null,
-      "duration_ms": 580
+      "duration_ms": 532
+    },
+    {
+      "field_name": "Resume Upload",
+      "selector": "input[type='file'][name='file']",
+      "action": "upload_file",
+      "value": "D:\\project\\General Macho\\backend\\storage\\resumes\\Andre_Ballard\\Andre_Ballard_Resume.pdf",
+      "success": true,
+      "error": null,
+      "duration_ms": 26
     }
   ],
   "navigation_history": [
     "https://jobs.micro1.ai/post/33ac3e3b-17f1-4a1c-981d-f9397e004c1f"
   ],
-  "created_at": "2025-12-23T06:06:21.381284+00:00",
-  "updated_at": "2025-12-23T06:06:36.060438+00:00",
+  "created_at": "2025-12-23T12:22:34.717248+00:00",
+  "updated_at": "2025-12-23T12:22:55.360794+00:00",
   "error_message": null
 }

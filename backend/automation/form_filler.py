@@ -1,8 +1,9 @@
 import logging
 import sys
+import time
 import traceback
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from autofill import AutofillEngine
 from autofill.models import FillResult
@@ -12,6 +13,9 @@ from automation.page_analyzer import PageAnalyzer, PageContent
 from automation.captcha_detector import CaptchaDetector, CaptchaDetectionResult, captcha_detector
 from automation.notification_service import NotificationService, notification_service
 from automation.application_logger import ApplicationLogger, LogAction, application_logger
+
+if TYPE_CHECKING:
+    from automation.workflows.registry import WorkflowRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +53,17 @@ class FormFillingResult:
 
 
 class FormFiller:
+    """
+    Main form filler class that handles job application automation.
+    
+    Supports platform-specific workflow handlers through the workflow registry.
+    When a platform is detected, the FormFiller can delegate to a platform-specific
+    handler for optimized processing.
+    """
+    
+    # Workflow registry for platform-specific handlers
+    _workflow_registry: Optional["WorkflowRegistry"] = None
+    
     def __init__(
         self,
         driver,
@@ -73,12 +88,94 @@ class FormFiller:
         self.page_analyzer = PageAnalyzer()
         
         self._last_ai_response = None
+        self._detected_platform: Optional[str] = None
+        self._platform_handler = None
         
         # Default: no retries - each step processed only once
         self.autofill_engine.configure(
             stop_on_error=False,
             retry_count=0,  # No retries - single attempt per field
             retry_delay_ms=0,
+        )
+    
+    @classmethod
+    def set_workflow_registry(cls, registry: "WorkflowRegistry") -> None:
+        """
+        Set the workflow registry for platform-specific handlers.
+        
+        Args:
+            registry: The workflow registry instance
+        """
+        cls._workflow_registry = registry
+        print(f"  [FORM_FILLER] Workflow registry configured with platforms: {registry.list_platforms()}")
+    
+    @classmethod
+    def get_workflow_registry(cls) -> Optional["WorkflowRegistry"]:
+        """Get the workflow registry."""
+        return cls._workflow_registry
+    
+    @property
+    def detected_platform(self) -> Optional[str]:
+        """Get the detected platform for this job application."""
+        return self._detected_platform
+    
+    def _get_platform_handler(self, platform: str, url: str):
+        """
+        Get a platform-specific workflow handler if available.
+        
+        Args:
+            platform: Platform name from AI detection
+            url: Job application URL
+            
+        Returns:
+            Platform-specific handler or None if not available or should use default
+        """
+        if not self._workflow_registry:
+            return None
+        
+        # Don't delegate to platform handler if platform is unknown or default
+        if platform in ("unknown", "custom", "default"):
+            return None
+        
+        # Check if there's a registered handler for this platform
+        if not self._workflow_registry.has_handler(platform):
+            print(f"  [PLATFORM] No specific handler for '{platform}', using default workflow")
+            return None
+        
+        # Create the platform-specific handler
+        handler = self._workflow_registry.create_handler(
+            driver=self.driver,
+            ai_service=self.ai_service,
+            profile_data=self.profile_data,
+            job_id=self.job_id,
+            platform=platform,
+            url=url,
+            storage=self.storage,
+            detector=self.captcha_detector,
+            notifier=self.notifier,
+            app_logger=self.app_logger,
+        )
+        
+        if handler:
+            print(f"  [PLATFORM] Using '{platform}' workflow handler")
+        
+        return handler
+    
+    def _convert_workflow_result_to_form_filling_result(self, result) -> FormFillingResult:
+        """Convert WorkflowResult to FormFillingResult for API compatibility."""
+        return FormFillingResult(
+            success=result.success,
+            page_number=result.page_number,
+            fields_filled=result.fields_filled,
+            fields_failed=result.fields_failed,
+            needs_more_navigation=result.needs_more_navigation,
+            submit_ready=result.submit_ready,
+            error=result.error,
+            unmapped_fields=result.unmapped_fields,
+            captcha_detected=result.captcha_detected,
+            captcha_type=result.captcha_type,
+            paused=result.paused,
+            pause_reason=result.pause_reason,
         )
     
     def _extract_page_content(self, page) -> PageContent:
@@ -239,7 +336,7 @@ class FormFiller:
         self.storage.add_autofill_results(self.job_id, result_dicts)
     
     def _click_navigation_button(self, page, button_info: Dict, button_type: str = "next") -> bool:
-        """Click a navigation button (next/submit) using AI-detected selector."""
+        """Click a navigation button (apply/next/submit) using AI-detected selector."""
         if not button_info:
             return False
         
@@ -261,7 +358,7 @@ class FormFiller:
             btn = locator.first
             if btn.is_visible():
                 btn.click()
-                print(f"  [NAV] Clicked '{button_text}' successfully")
+                print(f"  [NAV] Clicked '{button_text}' ({button_type}) successfully")
                 return True
             else:
                 print(f"  [NAV] Button not visible: {selector}")
@@ -269,6 +366,17 @@ class FormFiller:
             print(f"  [NAV] Failed to click button: {e}")
         
         return False
+    
+    def _click_apply_button(self, page, ai_response) -> bool:
+        """Try to click Apply button using AI-detected selector, then fallback patterns."""
+        # First try AI-detected apply button
+        if ai_response and ai_response.apply_button:
+            print(f"  [NAV] Trying AI-detected apply button...")
+            if self._click_navigation_button(page, ai_response.apply_button, "apply"):
+                return True
+        
+        # Fallback to common Apply button patterns
+        return self._try_click_apply_button(page)
     
     def _click_next_button_fallback(self, page) -> bool:
         """Fallback: Try common next button patterns."""
@@ -469,24 +577,27 @@ class FormFiller:
         )
         self._last_ai_response = ai_response
         
-        print(f"  [AI] Response: page_type={ai_response.page_type}, "
+        # Extract platform from AI response
+        detected_platform = getattr(ai_response, 'platform', 'unknown')
+        if detected_platform and detected_platform != "unknown":
+            self._detected_platform = detected_platform
+        
+        print(f"  [AI] Response: platform={detected_platform}, page_type={ai_response.page_type}, "
               f"is_form={ai_response.is_form_page}, "
+              f"needs_navigation={ai_response.needs_navigation}, "
               f"confidence={ai_response.confidence:.2f}")
         print(f"  [AI] Commands: {len(ai_response.field_mappings)} fields, "
               f"{len(ai_response.navigation_actions)} nav actions")
         
+        if ai_response.apply_button:
+            print(f"  [AI] Apply button: {ai_response.apply_button.get('selector', 'N/A')}")
         if ai_response.next_button:
             print(f"  [AI] Next button: {ai_response.next_button.get('selector', 'N/A')}")
         if ai_response.submit_button:
             print(f"  [AI] Submit button: {ai_response.submit_button.get('selector', 'N/A')}")
         
-        # NOTE: If AI says needs_navigation, we DON'T execute navigation here.
-        # Navigation is handled in the main loop after this function returns.
-        # This prevents duplicate processing of the same page.
-        if ai_response.needs_navigation and not has_captcha:
-            print(f"  [NAV] AI detected page needs navigation (will be handled by main loop)")
-            # Don't execute navigation here - let main loop handle it
-            pass
+        # NOTE: Navigation is handled in the main loop after this function returns.
+        # We set appropriate flags here based on page type.
         
         filled = 0
         failed = 0
@@ -512,10 +623,49 @@ class FormFiller:
                 ai_response=ai_response,
             )
         
-        # If not a form page with no fields, check what navigation options exist
+        # Handle non-form pages (job listings, review pages, etc.)
         # NOTE: We do NOT click buttons here - that's done in the main loop
+        has_apply = ai_response.apply_button is not None
+        
         if not ai_response.is_form_page and not ai_response.field_mappings:
-            print(f"  [NAV] Page is not a form page (no fields to fill)")
+            page_type = ai_response.page_type
+            print(f"  [NAV] Page is not a form page (type: {page_type}, no fields to fill)")
+            
+            # CASE: Job listing page - need to click Apply button
+            if page_type == "job_listing" or has_apply:
+                print(f"  [NAV] This is a job listing page - need to click Apply button")
+                return FormFillingResult(
+                    success=True,
+                    page_number=page_number,
+                    fields_filled=0,
+                    fields_failed=0,
+                    needs_more_navigation=True,  # Main loop will click Apply button
+                    submit_ready=False,
+                )
+            
+            # CASE: Confirmation page - application already submitted
+            if page_type == "confirmation":
+                print(f"  [NAV] This is a confirmation page - application submitted")
+                return FormFillingResult(
+                    success=True,
+                    page_number=page_number,
+                    fields_filled=0,
+                    fields_failed=0,
+                    needs_more_navigation=False,
+                    submit_ready=True,  # Mark as complete
+                )
+            
+            # CASE: Review page - ready to submit
+            if page_type == "review_page" and has_submit:
+                print(f"  [NAV] This is a review page - ready to submit")
+                return FormFillingResult(
+                    success=True,
+                    page_number=page_number,
+                    fields_filled=0,
+                    fields_failed=0,
+                    needs_more_navigation=False,
+                    submit_ready=True,
+                )
             
             # Check if there are navigation options (next/submit buttons detected by AI)
             if has_next or has_submit:
@@ -529,7 +679,7 @@ class FormFiller:
                     submit_ready=False,
                 )
             
-            # No form and no navigation options - this might be a landing page or confirmation
+            # No form and no navigation options - this might need manual intervention
             print(f"  [WARN] No form fields or navigation buttons found")
             return FormFillingResult(
                 success=False,
@@ -538,7 +688,7 @@ class FormFiller:
                 fields_failed=0,
                 needs_more_navigation=False,
                 submit_ready=False,
-                error="Not a form page and no navigation buttons found. May need to click Apply button manually.",
+                error=f"Page type '{page_type}' with no form fields or navigation buttons. May need manual intervention.",
             )
         
         return FormFillingResult(
@@ -593,28 +743,66 @@ class FormFiller:
             },
         )
         
+        # ============================================
+        # PLATFORM DETECTION: Check URL for known platforms first
+        # ============================================
+        current_url = page.url
+        
+        # Try to detect platform from URL before processing
+        if self._workflow_registry:
+            url_handler = self._workflow_registry.get_handler_for_url(current_url)
+            if url_handler and url_handler.PLATFORM_NAME != "default":
+                platform_name = url_handler.PLATFORM_NAME
+                print(f"  [PLATFORM] Detected '{platform_name}' from URL pattern")
+                
+                # Create and use platform-specific handler
+                handler = self._get_platform_handler(platform_name, current_url)
+                if handler:
+                    print(f"  [PLATFORM] Delegating to '{platform_name}' workflow handler")
+                    workflow_result = handler.process_application(page)
+                    return self._convert_workflow_result_to_form_filling_result(workflow_result)
+        
+        # ============================================
+        # DEFAULT WORKFLOW: Process with AI analysis
+        # ============================================
         total_filled = 0
         total_failed = 0
         all_unmapped = []
         
-        # Track processed URLs to prevent re-processing same page
-        processed_urls = set()
+        # Track processed pages to prevent re-processing
+        # For SPAs, URL may not change, so we also track page signatures
+        processed_pages = set()  # Set of (url, page_signature) tuples
+        consecutive_no_progress = 0  # Track consecutive pages with no fields filled
+        max_no_progress = 3  # Stop after 3 consecutive pages with no progress
+        platform_handler_checked = False  # Track if we've checked for platform handler after AI detection
         
         for page_num in range(MAX_FORM_PAGES):
             current_url = page.url
             
-            # Check if we already processed this exact URL
-            if current_url in processed_urls:
+            # Create page signature based on visible content
+            try:
+                page_title = page.title() if callable(getattr(page, 'title', None)) else str(page.title)
+                # Get a simple signature of form inputs on page
+                input_count = page.locator("input:visible, select:visible, textarea:visible").count()
+                page_signature = f"{page_title}_{input_count}"
+            except Exception:
+                page_signature = "unknown"
+            
+            page_key = (current_url, page_signature)
+            
+            # Check if we already processed this exact page state
+            if page_key in processed_pages:
                 print(f"\n  === PAGE {page_num + 1} - ALREADY PROCESSED ===")
-                print(f"  [SKIP] URL already processed: {current_url[:60]}...")
+                print(f"  [SKIP] Page already processed: {current_url[:50]}... (sig: {page_signature})")
                 print(f"  [STOP] Stopping to prevent duplicate processing")
                 break
             
             print(f"\n  === PAGE {page_num + 1} ===")
             print(f"  [URL] {current_url}")
+            print(f"  [SIG] {page_signature}")
             
-            # Mark this URL as processed BEFORE processing
-            processed_urls.add(current_url)
+            # Mark this page as processed BEFORE processing
+            processed_pages.add(page_key)
             
             self.app_logger.log_sync(
                 job_id=self.job_id,
@@ -624,6 +812,21 @@ class FormFiller:
             
             # Process page ONCE - no retries on same page
             result = self.process_page(page)
+            
+            # ============================================
+            # PLATFORM DETECTION: Check if AI detected a platform
+            # ============================================
+            if not platform_handler_checked and self._detected_platform and self._workflow_registry:
+                platform_handler_checked = True
+                detected = self._detected_platform
+                
+                if detected not in ("unknown", "custom", "default"):
+                    handler = self._get_platform_handler(detected, current_url)
+                    if handler:
+                        print(f"  [PLATFORM] Switching to '{detected}' workflow handler after detection")
+                        # Let the platform handler continue from current state
+                        workflow_result = handler.process_application(page)
+                        return self._convert_workflow_result_to_form_filling_result(workflow_result)
             
             # Handle CAPTCHA - pause and return
             if result.captcha_detected and result.paused:
@@ -667,6 +870,16 @@ class FormFiller:
             total_failed += result.fields_failed
             all_unmapped.extend(result.unmapped_fields or [])
             
+            # Track progress to detect stuck states
+            if result.fields_filled == 0 and not result.submit_ready:
+                consecutive_no_progress += 1
+                print(f"  [PROGRESS] No fields filled on this page ({consecutive_no_progress}/{max_no_progress})")
+                if consecutive_no_progress >= max_no_progress:
+                    print(f"  [STOP] No progress for {max_no_progress} consecutive pages, stopping")
+                    break
+            else:
+                consecutive_no_progress = 0  # Reset on progress
+            
             # CASE 1: Submit ready - application complete
             if result.submit_ready:
                 print(f"  [READY] Application ready for submission!")
@@ -707,20 +920,35 @@ class FormFiller:
                 ai_resp = self._last_ai_response
                 nav_clicked = False
                 
-                # For non-form pages (no fields filled), try Apply button first
-                if result.fields_filled == 0:
-                    print(f"  [NAV] No fields filled - trying Apply/Start buttons...")
-                    nav_clicked = self._try_click_apply_button(page)
+                # Determine page type to choose appropriate navigation strategy
+                page_type = ai_resp.page_type if ai_resp else "unknown"
                 
-                # Try AI-detected next button
-                if not nav_clicked and ai_resp and ai_resp.next_button:
-                    print(f"  [NAV] Trying AI-detected next button...")
-                    nav_clicked = self._click_navigation_button(page, ai_resp.next_button, "next")
+                # STRATEGY 1: For job listing pages, try Apply button first
+                if page_type == "job_listing" or (result.fields_filled == 0 and ai_resp and ai_resp.apply_button):
+                    print(f"  [NAV] Job listing page detected - trying Apply button...")
+                    # First try AI-detected apply button
+                    if ai_resp and ai_resp.apply_button:
+                        nav_clicked = self._click_navigation_button(page, ai_resp.apply_button, "apply")
+                    # Fallback to hardcoded Apply patterns
+                    if not nav_clicked:
+                        nav_clicked = self._try_click_apply_button(page)
                 
-                # Fallback to common patterns
+                # STRATEGY 2: For form pages, try Next button
                 if not nav_clicked:
-                    print(f"  [NAV] Trying common next button patterns...")
-                    nav_clicked = self._click_next_button_fallback(page)
+                    # Try AI-detected next button first
+                    if ai_resp and ai_resp.next_button:
+                        print(f"  [NAV] Trying AI-detected next button...")
+                        nav_clicked = self._click_navigation_button(page, ai_resp.next_button, "next")
+                    
+                    # Fallback to common next button patterns
+                    if not nav_clicked:
+                        print(f"  [NAV] Trying common next button patterns...")
+                        nav_clicked = self._click_next_button_fallback(page)
+                
+                # STRATEGY 3: For no-field pages, also try Apply button as last resort
+                if not nav_clicked and result.fields_filled == 0:
+                    print(f"  [NAV] No navigation found - trying Apply button as fallback...")
+                    nav_clicked = self._try_click_apply_button(page)
                 
                 if nav_clicked:
                     print(f"  [NAV] Button clicked, waiting for page to load...")
@@ -729,14 +957,18 @@ class FormFiller:
                     except Exception:
                         pass
                     
-                    # Verify URL actually changed
+                    # Additional wait for dynamic content
+                    time.sleep(1)
+                    
+                    # Verify URL or page content changed
                     url_after_click = page.url
                     if url_after_click == url_before_click:
-                        print(f"  [NAV] WARNING: URL did not change after click!")
-                        print(f"  [NAV] Stopping to prevent infinite loop")
-                        break
+                        # URL didn't change - could be SPA, check if page was already processed
+                        print(f"  [NAV] URL unchanged (may be SPA) - continuing to re-analyze...")
+                        # For SPAs, we still continue but the processed_pages check will prevent infinite loops
+                    else:
+                        print(f"  [NAV] URL changed: {url_after_click[:60]}...")
                     
-                    print(f"  [NAV] URL changed: {url_after_click[:60]}...")
                     # Continue to next page in the loop
                     continue
                 else:

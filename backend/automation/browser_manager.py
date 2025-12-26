@@ -28,7 +28,9 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # Thread pool for running sync browser operations
-_executor = ThreadPoolExecutor(max_workers=20)
+# Set to 30 to support 5+ concurrent browser sessions with headroom
+# for async wrapper operations and nested calls
+_executor = ThreadPoolExecutor(max_workers=30)
 
 # Cache the ChromeDriver path
 _driver_path = None
@@ -181,11 +183,22 @@ class SeleniumPage:
 
     def _parse_selector(self, selector: str):
         """Parse selector string to Selenium locator."""
+        import re
         selector = selector.strip()
         
         # Handle xpath= prefix
         if selector.startswith("xpath="):
             return By.XPATH, selector[6:]
+        
+        # Handle text= prefix (Playwright-specific)
+        if selector.startswith("text="):
+            text = selector[5:].strip("'\"")
+            return By.XPATH, f"//*[contains(text(), '{text}')]"
+        
+        # Handle text='...' format
+        if selector.startswith("text='") or selector.startswith('text="'):
+            text = selector[6:-1]
+            return By.XPATH, f"//*[contains(text(), '{text}')]"
         
         # ID selector
         if selector.startswith("#"):
@@ -196,12 +209,11 @@ class SeleniumPage:
             return By.CLASS_NAME, selector[1:]
         
         # Attribute selector [name='value']
-        if selector.startswith("[") and selector.endswith("]"):
+        if selector.startswith("[") and "]" in selector:
             return By.CSS_SELECTOR, selector
         
         # :has-text() selector (Playwright-specific, convert to XPath)
         if ":has-text(" in selector:
-            import re
             match = re.match(r"(.+?):has-text\(['\"](.+?)['\"]\)", selector)
             if match:
                 tag = match.group(1) or "*"
@@ -345,15 +357,36 @@ class SeleniumLocator:
             return locator
         return SeleniumLocator(self.driver, self.selector, self.page)
     
-    def is_visible(self) -> bool:
-        """Check if element is visible."""
-        elements = self._find_elements()
-        if not elements:
+    def is_visible(self, timeout: int = None) -> bool:
+        """Check if element is visible.
+        
+        Args:
+            timeout: Optional timeout in milliseconds to wait for visibility
+        """
+        import time
+        
+        if timeout:
+            # Wait up to timeout for element to be visible
+            end_time = time.time() + (timeout / 1000.0)
+            while time.time() < end_time:
+                self._elements = None  # Force re-find
+                elements = self._find_elements()
+                if elements:
+                    try:
+                        if elements[0].is_displayed():
+                            return True
+                    except Exception:
+                        pass
+                time.sleep(0.1)
             return False
-        try:
-            return elements[0].is_displayed()
-        except Exception:
-            return False
+        else:
+            elements = self._find_elements()
+            if not elements:
+                return False
+            try:
+                return elements[0].is_displayed()
+            except Exception:
+                return False
     
     def click(self):
         """Click the element."""
@@ -367,12 +400,61 @@ class SeleniumLocator:
             self.driver.execute_script("arguments[0].click();", elements[0])
     
     def fill(self, value: str):
-        """Fill input with value."""
+        """Fill input with value (clears first)."""
         elements = self._find_elements()
         if not elements:
             raise Exception(f"Element not found: {self.selector}")
         elements[0].clear()
         elements[0].send_keys(value)
+    
+    def type(self, value: str, delay: int = 0):
+        """Type text character by character with optional delay (Playwright-like API).
+        
+        Args:
+            value: Text to type
+            delay: Delay between keystrokes in milliseconds
+        """
+        import time
+        elements = self._find_elements()
+        if not elements:
+            raise Exception(f"Element not found: {self.selector}")
+        element = elements[0]
+        
+        if delay > 0:
+            # Type character by character with delay
+            for char in str(value):
+                element.send_keys(char)
+                time.sleep(delay / 1000.0)  # Convert ms to seconds
+        else:
+            element.send_keys(value)
+    
+    def clear(self):
+        """Clear the input field."""
+        elements = self._find_elements()
+        if not elements:
+            raise Exception(f"Element not found: {self.selector}")
+        elements[0].clear()
+    
+    def text_content(self) -> str:
+        """Get text content of element."""
+        elements = self._find_elements()
+        if not elements:
+            return ""
+        return elements[0].text
+    
+    def get_attribute(self, name: str) -> Optional[str]:
+        """Get attribute value."""
+        elements = self._find_elements()
+        if not elements:
+            return None
+        return elements[0].get_attribute(name)
+    
+    def is_checked(self) -> bool:
+        """Check if checkbox/radio is checked."""
+        elements = self._find_elements()
+        if not elements:
+            return False
+        return elements[0].is_selected()
     
     def count(self) -> int:
         """Count matching elements."""

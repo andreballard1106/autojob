@@ -13,6 +13,7 @@ from automation.page_analyzer import PageAnalyzer, PageContent
 from automation.ai_service import AIService, AIAnalysisResult
 from automation.session_storage import SessionStorage, session_storage
 from automation.form_filler import FormFiller, FormFillingResult
+from automation.workflows import workflow_registry, initialize_workflow_registry
 
 logger = logging.getLogger(__name__)
 
@@ -64,11 +65,19 @@ class AIOrchestrator:
         self.browser_manager = BrowserManager(max_browsers=self.max_concurrent, headless=headless)
         self.page_analyzer = PageAnalyzer()
         self.storage = session_storage
-        self._executor = ThreadPoolExecutor(max_workers=self.max_concurrent + 5)
+        # ThreadPoolExecutor needs enough workers for:
+        # - max_concurrent browser automation tasks
+        # - Additional headroom for nested operations and async wrappers
+        # Using max_concurrent * 2 + 5 ensures sufficient parallelism
+        self._executor = ThreadPoolExecutor(max_workers=max(self.max_concurrent * 2 + 5, 15))
         
         self._ai_service: Optional[AIService] = None
         self._profiles_cache: Dict[str, Dict[str, Any]] = {}
         self._active_sessions: Dict[str, BrowserSession] = {}
+        
+        # Initialize workflow registry and connect to FormFiller
+        self._workflow_registry = initialize_workflow_registry()
+        FormFiller.set_workflow_registry(self._workflow_registry)
     
     def set_ai_service(self, api_key: str, model: str = "gpt-4o") -> None:
         self._ai_service = AIService(api_key=api_key, model=model)
@@ -79,6 +88,21 @@ class AIOrchestrator:
     def set_headless(self, headless: bool) -> None:
         """Update browser headless setting."""
         self.browser_manager.set_headless(headless)
+    
+    def register_platform_handler(self, handler_class, platform_name: str = None) -> None:
+        """
+        Register a platform-specific workflow handler.
+        
+        Args:
+            handler_class: The workflow handler class to register
+            platform_name: Optional platform name (uses class PLATFORM_NAME if not provided)
+        """
+        self._workflow_registry.register(handler_class, platform_name)
+        print(f"[OK] Registered platform handler: {platform_name or handler_class.PLATFORM_NAME}")
+    
+    def get_registered_platforms(self) -> List[str]:
+        """Get list of registered platform handlers."""
+        return self._workflow_registry.list_platforms()
     
     async def initialize(self) -> None:
         await self.browser_manager.initialize()

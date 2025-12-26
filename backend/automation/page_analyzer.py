@@ -177,16 +177,61 @@ EXTRACT_JS = """
                el.offsetHeight > 0;
     };
     
-    // Helper to find label
+    // Helper to find label (enhanced for Workday)
     const findLabel = (el) => {
+        // 1. Standard label[for="id"]
         if (el.id) {
             const label = document.querySelector(`label[for="${el.id}"]`);
             if (label) return label.textContent.trim().slice(0, 200);
         }
+        
+        // 2. Parent label element
         const parentLabel = el.closest('label');
         if (parentLabel) return parentLabel.textContent.trim().slice(0, 200);
+        
+        // 3. aria-label attribute
         if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').slice(0, 200);
+        
+        // 4. aria-labelledby
+        const labelledBy = el.getAttribute('aria-labelledby');
+        if (labelledBy) {
+            const labelEl = document.getElementById(labelledBy);
+            if (labelEl) return labelEl.textContent.trim().slice(0, 200);
+        }
+        
+        // 5. Workday-specific: Look for label in parent container
+        const container = el.closest('[data-automation-id]') || el.closest('div') || el.parentElement;
+        if (container) {
+            // Look for label element in container
+            const labelInContainer = container.querySelector('label');
+            if (labelInContainer && labelInContainer !== el) {
+                return labelInContainer.textContent.trim().slice(0, 200);
+            }
+            
+            // Look for Workday formLabel
+            const formLabel = container.querySelector('[data-automation-id*="formLabel"], [data-automation-id*="Label"]');
+            if (formLabel) return formLabel.textContent.trim().slice(0, 200);
+            
+            // Look for span/div with label-like class
+            const labelSpan = container.querySelector('.label, .form-label, span:first-child');
+            if (labelSpan && labelSpan.textContent.trim().length < 100) {
+                return labelSpan.textContent.trim().slice(0, 200);
+            }
+        }
+        
+        // 6. Previous sibling that might be a label
+        const prevSibling = el.previousElementSibling;
+        if (prevSibling) {
+            const text = prevSibling.textContent.trim();
+            // Only use short text as label (avoids paragraphs)
+            if (text && text.length > 0 && text.length < 80) {
+                return text.slice(0, 200);
+            }
+        }
+        
+        // 7. Placeholder as fallback
         if (el.getAttribute('placeholder')) return el.getAttribute('placeholder').slice(0, 200);
+        
         return '';
     };
     
@@ -230,6 +275,158 @@ EXTRACT_JS = """
             }
             
             result.inputs.push(inputData);
+        });
+    });
+    
+    // Extract radio groups (Workday uses custom role="radiogroup" elements)
+    document.querySelectorAll('[role="radiogroup"], fieldset:has(input[type="radio"])').forEach(group => {
+        if (result.inputs.length >= 100) return;
+        if (!isVisible(group)) return;
+        
+        // Find the question/label for this radio group
+        let groupLabel = '';
+        const legend = group.querySelector('legend');
+        if (legend) {
+            groupLabel = legend.textContent.trim();
+        } else {
+            // Try to find label from aria-label or nearby text
+            groupLabel = group.getAttribute('aria-label') || 
+                         group.getAttribute('aria-labelledby') || '';
+            if (!groupLabel) {
+                // Look for preceding label or heading
+                const prevEl = group.previousElementSibling;
+                if (prevEl && (prevEl.tagName === 'LABEL' || prevEl.tagName === 'P' || prevEl.tagName === 'DIV')) {
+                    groupLabel = prevEl.textContent.trim().slice(0, 200);
+                }
+            }
+        }
+        
+        // Get all radio options
+        const options = [];
+        group.querySelectorAll('[role="radio"], input[type="radio"], label').forEach(opt => {
+            const optText = opt.textContent || opt.getAttribute('aria-label') || opt.value || '';
+            if (optText.trim() && !options.includes(optText.trim())) {
+                options.push(optText.trim().slice(0, 50));
+            }
+        });
+        
+        if (groupLabel || options.length > 0) {
+            result.inputs.push({
+                tag: 'radiogroup',
+                type: 'radiogroup',
+                label: groupLabel.slice(0, 200),
+                id: group.id || '',
+                'data-automation-id': group.getAttribute('data-automation-id') || '',
+                options: options.slice(0, 10),
+                required: group.hasAttribute('aria-required') || groupLabel.includes('*')
+            });
+        }
+    });
+    
+    // Also extract individual radio buttons that might not be in a radiogroup
+    document.querySelectorAll('input[type="radio"]').forEach(radio => {
+        if (result.inputs.length >= 100) return;
+        if (!isVisible(radio)) return;
+        
+        const label = findLabel(radio);
+        const name = radio.name || '';
+        
+        // Check if already captured in a radiogroup
+        const existingGroup = result.inputs.find(inp => inp.type === 'radiogroup' && inp.label.includes(label));
+        if (!existingGroup) {
+            result.inputs.push({
+                tag: 'input',
+                type: 'radio',
+                label: label,
+                id: radio.id || '',
+                name: name,
+                value: radio.value || '',
+                'data-automation-id': radio.getAttribute('data-automation-id') || '',
+                checked: radio.checked
+            });
+        }
+    });
+    
+    // Extract checkboxes with their labels
+    document.querySelectorAll('input[type="checkbox"], [role="checkbox"]').forEach(cb => {
+        if (result.inputs.length >= 100) return;
+        if (!isVisible(cb)) return;
+        
+        const label = cb.tagName === 'INPUT' ? findLabel(cb) : (cb.textContent || cb.getAttribute('aria-label') || '');
+        
+        result.inputs.push({
+            tag: 'checkbox',
+            type: 'checkbox',
+            label: label.slice(0, 200),
+            id: cb.id || '',
+            'data-automation-id': cb.getAttribute('data-automation-id') || '',
+            checked: cb.checked || cb.getAttribute('aria-checked') === 'true',
+            required: cb.hasAttribute('required') || cb.hasAttribute('aria-required')
+        });
+    });
+    
+    // Extract Workday custom dropdowns (combobox, listbox, custom selects)
+    // These are NOT standard <select> elements but custom components
+    const workdayDropdownSelectors = [
+        '[role="combobox"]',
+        '[role="listbox"]',
+        '[data-automation-id*="selectInputContainer"]',
+        '[data-automation-id*="dropdown"]',
+        '[data-automation-id*="Select"]',
+        '[data-automation-id*="countryRegion"]',
+        '[data-automation-id*="addressSection"]',
+        'button[aria-haspopup="listbox"]',
+        '[data-automation-id*="formField"] button[aria-expanded]'
+    ];
+    
+    workdayDropdownSelectors.forEach(selector => {
+        document.querySelectorAll(selector).forEach(el => {
+            if (result.inputs.length >= 100) return;
+            if (!isVisible(el)) return;
+            
+            // Skip if already captured as standard select
+            const automationId = el.getAttribute('data-automation-id') || '';
+            const existingInput = result.inputs.find(inp => 
+                inp['data-automation-id'] === automationId && automationId !== ''
+            );
+            if (existingInput) return;
+            
+            // Find label for this dropdown
+            let label = '';
+            const container = el.closest('[data-automation-id]') || el.parentElement;
+            if (container) {
+                const labelEl = container.querySelector('label, [data-automation-id*="Label"], [data-automation-id*="formLabel"]');
+                if (labelEl) label = labelEl.textContent.trim();
+            }
+            if (!label) {
+                label = el.getAttribute('aria-label') || el.getAttribute('placeholder') || '';
+            }
+            if (!label) {
+                const prevEl = el.previousElementSibling;
+                if (prevEl) label = prevEl.textContent.trim();
+            }
+            
+            // Get current value if displayed
+            const currentValue = el.textContent.trim() || el.getAttribute('value') || '';
+            
+            // Check if required (look for asterisk in label or aria-required)
+            const isRequired = el.hasAttribute('aria-required') || 
+                               el.hasAttribute('required') ||
+                               label.includes('*') ||
+                               (container && container.textContent.includes('*'));
+            
+            result.inputs.push({
+                tag: 'workday_dropdown',
+                type: 'workday_dropdown',
+                label: label.slice(0, 200),
+                id: el.id || '',
+                'data-automation-id': automationId,
+                'aria-label': el.getAttribute('aria-label') || '',
+                currentValue: currentValue.slice(0, 100),
+                required: isRequired,
+                // Note: options not available - loaded dynamically via API
+                options: []
+            });
         });
     });
     

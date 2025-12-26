@@ -50,7 +50,37 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
+    # Graceful shutdown
     logger.info("Shutting down...")
+    
+    # Cancel background tasks
+    try:
+        from automation.task_tracker import task_tracker
+        cancelled = await task_tracker.cancel_all_tasks()
+        if cancelled > 0:
+            logger.info(f"Cancelled {cancelled} background task(s)")
+    except Exception as e:
+        logger.warning(f"Error cancelling tasks: {e}")
+    
+    # Shutdown orchestrator (closes all browsers)
+    try:
+        from automation.orchestrator_manager import shutdown_orchestrator, is_orchestrator_running
+        if is_orchestrator_running():
+            await shutdown_orchestrator()
+            logger.info("Orchestrator shutdown complete")
+    except Exception as e:
+        logger.warning(f"Error shutting down orchestrator: {e}")
+    
+    # Flush pending application logs
+    try:
+        from automation.application_logger import application_logger
+        flushed = await application_logger.flush_pending_logs()
+        if flushed > 0:
+            logger.info(f"Flushed {flushed} pending log(s)")
+    except Exception as e:
+        logger.warning(f"Error flushing logs: {e}")
+    
+    logger.info("Shutdown complete")
 
 
 # Create FastAPI application

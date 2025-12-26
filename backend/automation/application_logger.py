@@ -1,4 +1,5 @@
 import logging
+import threading
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -62,6 +63,7 @@ class ApplicationLogger:
         if self._initialized:
             return
         self._pending_logs: List[Dict[str, Any]] = []
+        self._lock = threading.Lock()  # Thread-safe access to pending logs
         self._initialized = True
     
     async def log(
@@ -88,13 +90,14 @@ class ApplicationLogger:
                 
         except Exception as e:
             logger.error(f"Failed to log action {action.value} for job {job_id}: {e}")
-            self._pending_logs.append({
-                "job_id": job_id,
-                "action": action.value,
-                "details": details,
-                "screenshot_path": screenshot_path,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            })
+            with self._lock:
+                self._pending_logs.append({
+                    "job_id": job_id,
+                    "action": action.value,
+                    "details": details,
+                    "screenshot_path": screenshot_path,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
             return None
     
     def log_sync(
@@ -104,22 +107,27 @@ class ApplicationLogger:
         details: Dict[str, Any] = None,
         screenshot_path: str = None,
     ) -> None:
-        self._pending_logs.append({
-            "job_id": job_id,
-            "action": action.value,
-            "details": details or {},
-            "screenshot_path": screenshot_path,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        with self._lock:
+            self._pending_logs.append({
+                "job_id": job_id,
+                "action": action.value,
+                "details": details or {},
+                "screenshot_path": screenshot_path,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
     
     async def flush_pending_logs(self) -> int:
-        if not self._pending_logs:
-            return 0
+        # Take a snapshot of pending logs with lock
+        with self._lock:
+            if not self._pending_logs:
+                return 0
+            logs_to_flush = self._pending_logs.copy()
+            self._pending_logs.clear()
         
         flushed = 0
         try:
             async with async_session_maker() as db:
-                for log_data in self._pending_logs:
+                for log_data in logs_to_flush:
                     log_entry = ApplicationLog(
                         application_id=log_data["job_id"],
                         action=log_data["action"],
@@ -130,10 +138,13 @@ class ApplicationLogger:
                     flushed += 1
                 
                 await db.commit()
-                self._pending_logs.clear()
                 
         except Exception as e:
             logger.error(f"Failed to flush pending logs: {e}")
+            # Put failed logs back
+            with self._lock:
+                self._pending_logs.extend(logs_to_flush)
+            flushed = 0
         
         return flushed
     

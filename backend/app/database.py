@@ -14,12 +14,19 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # Create async engine for PostgreSQL
+# Pool size configured for concurrent job processing:
+# - pool_size: base number of persistent connections
+# - max_overflow: additional connections allowed during peak load
+# - Total max connections = pool_size + max_overflow = 20
+# This supports 5+ concurrent job processing tasks plus API requests
 engine = create_async_engine(
     settings.database_url,
     echo=settings.sql_echo,  # Only log SQL when explicitly enabled
-    pool_size=5,
+    pool_size=10,
     max_overflow=10,
     pool_pre_ping=True,
+    pool_timeout=30,  # Wait up to 30 seconds for a connection
+    pool_recycle=3600,  # Recycle connections after 1 hour
 )
 
 # Create session factory

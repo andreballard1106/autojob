@@ -3,6 +3,7 @@ Job Application Management API Routes
 """
 
 from typing import Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
@@ -22,6 +23,7 @@ from app.schemas.job import (
     JobListResponse,
     BulkCreateResponse,
 )
+from automation.task_tracker import task_tracker
 
 router = APIRouter()
 
@@ -546,22 +548,82 @@ async def start_processing(
             detail="OpenAI API key is required for job processing. Please configure it in Settings."
         )
 
-    job_ids = []
+    # Filter out jobs that are already being processed
+    all_job_ids = [str(job.id) for job in jobs]
+    new_job_ids = task_tracker.filter_non_processing_jobs(all_job_ids)
+    
+    if not new_job_ids:
+        # All jobs are already being processed
+        already_processing = task_tracker.get_processing_job_ids()
+        return {
+            "message": "All selected jobs are already being processed",
+            "queued": 0,
+            "already_processing": len(already_processing),
+        }
+    
+    # Only update status for jobs that will actually be processed
     for job in jobs:
-        job.status = JobStatus.QUEUED.value
-        job_ids.append(str(job.id))
+        if str(job.id) in new_job_ids:
+            job.status = JobStatus.QUEUED.value
 
     await db.commit()
     
-    # Use asyncio.create_task for more reliable async task execution
-    import asyncio
-    asyncio.create_task(_process_jobs_parallel(job_ids, max_concurrent))
+    # Create tracked task with unique ID
+    task_id = f"batch_{uuid4().hex[:8]}"
+    task = task_tracker.create_task(
+        task_id=task_id,
+        coro=_process_jobs_parallel(new_job_ids, max_concurrent),
+        job_ids=new_job_ids,
+    )
     
-    print(f"[START] Background task created for {len(job_ids)} jobs", flush=True)
+    if task:
+        print(f"[START] Background task {task_id} created for {len(new_job_ids)} jobs", flush=True)
+    else:
+        print(f"[START] Task creation returned None - jobs may already be processing", flush=True)
 
+    skipped = len(all_job_ids) - len(new_job_ids)
     return {
-        "message": f"Queued {len(job_ids)} jobs for processing (max {max_concurrent} concurrent)",
-        "queued": len(job_ids),
+        "message": f"Queued {len(new_job_ids)} jobs for processing (max {max_concurrent} concurrent)",
+        "queued": len(new_job_ids),
+        "skipped_already_processing": skipped,
+        "task_id": task_id,
+    }
+
+
+@router.get("/processing/status")
+async def get_processing_status():
+    """Get current processing status including active tasks and jobs being processed."""
+    from automation.orchestrator_manager import get_orchestrator_sync
+    
+    # Get task information
+    active_tasks = task_tracker.get_active_task_count()
+    processing_job_ids = list(task_tracker.get_processing_job_ids())
+    all_task_info = task_tracker.get_all_task_info()
+    
+    # Get orchestrator info
+    orchestrator = get_orchestrator_sync()
+    active_browsers = 0
+    browser_job_ids = []
+    if orchestrator:
+        active_browsers = orchestrator.get_active_browsers_count()
+        browser_job_ids = orchestrator.get_active_job_ids()
+    
+    return {
+        "active_tasks": active_tasks,
+        "processing_job_count": len(processing_job_ids),
+        "processing_job_ids": processing_job_ids[:20],  # Limit response size
+        "active_browsers": active_browsers,
+        "browser_job_ids": browser_job_ids,
+        "task_details": [
+            {
+                "task_id": info.task_id,
+                "status": info.status,
+                "job_count": len(info.job_ids),
+                "created_at": info.created_at,
+                "error": info.error,
+            }
+            for info in list(all_task_info.values())[-10:]  # Last 10 tasks
+        ],
     }
 
 

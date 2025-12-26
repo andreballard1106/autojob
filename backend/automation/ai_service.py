@@ -86,12 +86,20 @@ class NavigationButton:
 @dataclass
 class AIAnalysisResult:
     """Result from OpenAI analysis of job application page."""
+    # Platform identification
+    platform: str = "unknown"  # workday, greenhouse, lever, workable, etc.
+    
     is_form_page: bool = False
     page_type: str = "unknown"
     confidence: float = 0.0
     
     autofill_commands: List[AutofillCommand] = field(default_factory=list)
     
+    # Navigation buttons - mutually exclusive purposes:
+    # - apply_button: For job listing pages to START the application
+    # - next_button: For multi-step forms to go to NEXT step
+    # - submit_button: For FINAL submission of completed application
+    apply_button: Optional[NavigationButton] = None
     next_button: Optional[NavigationButton] = None
     submit_button: Optional[NavigationButton] = None
     
@@ -105,20 +113,143 @@ class AIAnalysisResult:
         """Get all autofill commands as dicts."""
         return [cmd.to_dict() for cmd in self.autofill_commands]
     
+    def has_apply_button(self) -> bool:
+        return self.apply_button is not None
+    
     def has_next_button(self) -> bool:
         return self.next_button is not None
     
     def has_submit_button(self) -> bool:
         return self.submit_button is not None
+    
+    def get_navigation_button(self) -> Optional[NavigationButton]:
+        """Get the most appropriate navigation button for current page state."""
+        # Priority: apply_button (start) > next_button (continue) > submit_button (finish)
+        if self.apply_button:
+            return self.apply_button
+        if self.next_button:
+            return self.next_button
+        if self.submit_button:
+            return self.submit_button
+        return None
 
 
 SYSTEM_PROMPT = """You are an AI that analyzes job application web pages and generates autofill commands.
 
 Your task:
-1. Analyze the page inputs and buttons
-2. Match inputs to user profile data (including file uploads for resume/cover letter)
-3. Generate EXACT autofill commands for a Selenium-based framework
-4. Identify Next/Continue and Submit buttons
+1. FIRST determine the page type (job listing, application form, multi-step form, etc.)
+2. Analyze the page inputs and buttons
+3. Match inputs to user profile data (including file uploads for resume/cover letter)
+4. Generate EXACT autofill commands for a Selenium-based framework
+5. Identify the appropriate navigation button based on page type
+
+=== PAGE TYPE DETECTION (CRITICAL) ===
+
+FIRST, determine the page type based on these indicators:
+
+1. "job_listing" - A job description page that requires clicking an Apply button to START the application
+   Indicators:
+   - Job title, company name, job description are prominently displayed
+   - Has "Apply", "Apply Now", "Apply for this job", "Start Application" button
+   - Few or NO form input fields (maybe just email capture)
+   - Page shows job requirements, responsibilities, qualifications
+   ACTION: Set is_form_page=false, needs_navigation=true, provide apply_button
+
+2. "application_form" - The ACTUAL job application form with fields to fill
+   Indicators:
+   - Multiple input fields for personal info (name, email, phone, address)
+   - File upload fields for resume/cover letter
+   - Work experience, education sections
+   - May have "Next", "Continue", "Submit" buttons
+   ACTION: Set is_form_page=true, fill autofill_commands, provide next_button or submit_button
+
+3. "multi_step_form" - One page in a multi-page application wizard
+   Indicators:
+   - Progress indicator showing steps (Step 1 of 5, etc.)
+   - "Next", "Continue", "Save and Continue" buttons
+   - Form fields for one section (e.g., only personal info, or only work history)
+   ACTION: Set is_form_page=true, fill autofill_commands, provide next_button
+
+4. "review_page" - A page to review the application before submission
+   Indicators:
+   - Shows summary of entered information
+   - "Submit", "Submit Application", "Confirm" buttons
+   - Usually no editable fields (or minimal)
+   ACTION: Set is_form_page=false, provide submit_button
+
+5. "login_page" - Requires login/signup before application
+   Indicators:
+   - Login/signup form prominently displayed
+   - "Sign In", "Create Account", "Register" buttons
+   ACTION: Set is_form_page=false, needs_navigation=true, provide login form fields
+
+6. "confirmation" - Application already submitted
+   Indicators:
+   - "Thank you", "Application Received", "Confirmation" messages
+   - No more action required
+   ACTION: Set is_form_page=false, needs_navigation=false
+
+=== JOB PLATFORM DETECTION ===
+
+IMPORTANT: Identify the job application platform from URL patterns, page structure, and HTML attributes.
+
+Known platforms and their identifiers:
+
+1. "workday" (Oracle Cloud HCM / Workday)
+   - URL contains: myworkdayjobs.com, wd5.myworkdaysite.com, workday.com
+   - Has data-automation-id attributes
+   - Progressive disclosure forms
+
+2. "greenhouse"
+   - URL contains: greenhouse.io, boards.greenhouse.io
+   - Job board structure with specific styling
+   - Standard application form layout
+
+3. "lever"
+   - URL contains: lever.co, jobs.lever.co
+   - Clean, minimal design
+   - Single-page or simple multi-step forms
+
+4. "workable"
+   - URL contains: workable.com, apply.workable.com
+   - Standard ATS form structure
+
+5. "smartrecruiters"
+   - URL contains: smartrecruiters.com, jobs.smartrecruiters.com
+   - Enterprise-style forms
+
+6. "icims"
+   - URL contains: icims.com, careers-*.icims.com
+   - Complex multi-step wizard
+
+7. "taleo"
+   - URL contains: taleo.net, oracle.taleo.net
+   - Legacy Oracle system, table-based layouts
+
+8. "successfactors"
+   - URL contains: successfactors.com, jobs.sap.com
+   - SAP-style forms
+
+9. "jobvite"
+   - URL contains: jobvite.com, jobs.jobvite.com
+   - Modern application flow
+
+10. "bamboohr"
+    - URL contains: bamboohr.com
+    - Simple, clean forms
+
+11. "ashbyhq"
+    - URL contains: ashbyhq.com, jobs.ashbyhq.com
+    - Modern startup-focused ATS
+
+12. "custom" - Company's own application system
+    - No recognizable ATS patterns
+    - Custom domain without known ATS identifiers
+
+13. "unknown" - Cannot determine platform
+    - Use this when platform cannot be identified
+
+Set platform based on URL pattern FIRST, then verify with page structure if unsure.
 
 === AUTOFILL COMMAND FORMAT ===
 
@@ -185,6 +316,7 @@ selector_type is always "css" unless absolutely necessary to use "xpath".
 === OUTPUT JSON FORMAT ===
 
 {
+    "platform": "workday",
     "is_form_page": true,
     "page_type": "application_form",
     "confidence": 0.9,
@@ -211,7 +343,7 @@ selector_type is always "css" unless absolutely necessary to use "xpath".
             "action": "select_option",
             "selector": "#country",
             "selector_type": "css", 
-            "value": "United States",
+            "value": "United States of America",
             "select_by": "text",
             "field_name": "Country",
             "confidence": 0.95
@@ -226,6 +358,8 @@ selector_type is always "css" unless absolutely necessary to use "xpath".
         }
     ],
     
+    "apply_button": null,
+    
     "next_button": {
         "selector": "button[data-automation-id='bottom-navigation-next-button']",
         "selector_type": "css",
@@ -239,26 +373,41 @@ selector_type is always "css" unless absolutely necessary to use "xpath".
     "unmapped_fields": ["How did you hear about us?", "Referral Code"]
 }
 
-=== PAGE TYPES ===
+=== BUTTON DETECTION RULES ===
 
-- "application_form" - Has form fields to fill
-- "job_listing" - Job description, needs "Apply" button click
-- "login_page" - Login required
-- "confirmation" - Application submitted
-- "multi_step_form" - Part of multi-page application
+IMPORTANT: Detect buttons based on their purpose:
+
+1. "apply_button" - ONLY for job listing pages to START the application
+   - Text: "Apply", "Apply Now", "Apply for this job", "Start Application", "Begin Application"
+   - Usually a prominent CTA button on job description pages
+   - Set this ONLY when page_type is "job_listing"
+
+2. "next_button" - For navigating to the NEXT step in a multi-step form
+   - Text: "Next", "Continue", "Save and Continue", "Proceed", "Next Step"
+   - Found in multi-step application wizards
+   
+3. "submit_button" - For FINAL submission of the application
+   - Text: "Submit", "Submit Application", "Apply", "Finish", "Complete Application"
+   - This is the FINAL action button, not for starting or navigating
+
+DO NOT confuse apply_button with submit_button:
+- apply_button: Starts the application process (on job listing page)
+- submit_button: Completes/submits a filled application (on final form page)
 
 === CRITICAL RULES ===
 
-1. ONLY fill fields you can CONFIDENTLY match to profile data
-2. Use the EXACT selector that will find the element
-3. For dropdowns, value is the VISIBLE TEXT of the option
-4. Always identify Next/Continue buttons as next_button
-5. Always identify Submit/Apply buttons as submit_button  
-6. For file upload inputs (resume, cover letter): Use upload_file action with the provided file path
-7. Return VALID JSON only - no markdown, no comments
-8. If page needs login or navigation first, set needs_navigation=true
+1. ALWAYS detect platform from URL FIRST (check URL patterns in JOB PLATFORM DETECTION section)
+2. ALWAYS determine page_type before analyzing form fields
+3. For job_listing pages: Set is_form_page=false, needs_navigation=true, provide apply_button
+4. ONLY fill fields you can CONFIDENTLY match to profile data
+5. Use the EXACT selector that will find the element
+6. For dropdowns, value is the VISIBLE TEXT of the option
+7. For file upload inputs (resume, cover letter): Use upload_file action with the provided file path
+8. Return VALID JSON only - no markdown, no comments
 9. Set confidence based on how sure you are about the match
-10. Only put fields in unmapped_fields if NO matching profile data exists"""
+10. Only put fields in unmapped_fields if NO matching profile data exists
+11. For multi-step forms, provide next_button to navigate to the next step
+12. Set platform to "unknown" if you cannot identify the job platform"""
 
 
 class AIService:
@@ -576,6 +725,7 @@ class AIService:
             )
         
         result = AIAnalysisResult(
+            platform=data.get("platform", "unknown"),
             is_form_page=data.get("is_form_page", False),
             page_type=data.get("page_type", "unknown"),
             confidence=data.get("confidence", 0.0),
@@ -596,6 +746,15 @@ class AIService:
                 confidence=cmd_data.get("confidence", 1.0),
             )
             result.autofill_commands.append(cmd)
+        
+        if data.get("apply_button"):
+            ab = data["apply_button"]
+            result.apply_button = NavigationButton(
+                selector=ab.get("selector", ""),
+                selector_type=ab.get("selector_type", "css"),
+                text=ab.get("text", ""),
+                button_type="apply",
+            )
         
         if data.get("next_button"):
             nb = data["next_button"]
@@ -672,9 +831,12 @@ class AIService:
             result = self._parse_response(content)
             
             print(f"  [AI] Parsed result:")
+            print(f"       - platform: {result.platform}")
             print(f"       - is_form_page: {result.is_form_page}")
             print(f"       - page_type: {result.page_type}")
+            print(f"       - needs_navigation: {result.needs_navigation}")
             print(f"       - autofill_commands: {len(result.autofill_commands)}")
+            print(f"       - apply_button: {result.apply_button.selector if result.apply_button else 'None'}")
             print(f"       - next_button: {result.next_button.selector if result.next_button else 'None'}")
             print(f"       - submit_button: {result.submit_button.selector if result.submit_button else 'None'}")
             print(f"       - unmapped_fields: {len(result.unmapped_fields)}")
@@ -754,6 +916,7 @@ class AIService:
         
         @dc
         class AIFormFillingResponse:
+            platform: str = "unknown"
             is_form_page: bool = True
             needs_navigation: bool = False
             navigation_actions: List = None
@@ -761,6 +924,7 @@ class AIService:
             unmapped_fields: List[str] = None
             page_type: str = "unknown"
             confidence: float = 0.0
+            apply_button: Optional[Dict] = None
             next_button: Optional[Dict] = None
             submit_button: Optional[Dict] = None
             
@@ -793,6 +957,7 @@ class AIService:
             ))
         
         response = AIFormFillingResponse(
+            platform=result.platform,
             is_form_page=result.is_form_page,
             needs_navigation=result.needs_navigation,
             navigation_actions=nav_actions,
@@ -801,6 +966,13 @@ class AIService:
             page_type=result.page_type,
             confidence=result.confidence,
         )
+        
+        if result.apply_button:
+            response.apply_button = {
+                "selector": result.apply_button.selector,
+                "selector_type": result.apply_button.selector_type,
+                "text": result.apply_button.text,
+            }
         
         if result.next_button:
             response.next_button = {

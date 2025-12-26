@@ -1,6 +1,7 @@
 import json
 import logging
 import asyncio
+import threading
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from enum import Enum
@@ -84,20 +85,26 @@ class NotificationService:
         self._pending_queue: List[SystemNotification] = []
         self._storage_path = NOTIFICATION_STORAGE_PATH
         self._storage_path.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()  # Thread-safe access to notifications
         self._initialized = True
     
     def subscribe(self, callback: Callable[[SystemNotification], None]) -> None:
-        self._subscribers.append(callback)
+        with self._lock:
+            self._subscribers.append(callback)
     
     def unsubscribe(self, callback: Callable) -> None:
-        if callback in self._subscribers:
-            self._subscribers.remove(callback)
+        with self._lock:
+            if callback in self._subscribers:
+                self._subscribers.remove(callback)
     
     def notify(self, notification: SystemNotification) -> None:
-        self._notifications.append(notification)
+        with self._lock:
+            self._notifications.append(notification)
+            subscribers_copy = self._subscribers.copy()
+        
         self._save_notification(notification)
         
-        for subscriber in self._subscribers:
+        for subscriber in subscribers_copy:
             try:
                 subscriber(notification)
             except Exception as e:
@@ -250,7 +257,8 @@ class NotificationService:
         notification_type: NotificationType = None,
         unread_only: bool = False,
     ) -> List[SystemNotification]:
-        filtered = self._notifications.copy()
+        with self._lock:
+            filtered = self._notifications.copy()
         
         if job_id:
             filtered = [n for n in filtered if n.job_id == job_id]
@@ -263,17 +271,19 @@ class NotificationService:
         return filtered[:limit]
     
     def get_pending_actions(self) -> List[SystemNotification]:
-        return [n for n in self._notifications if n.requires_action]
+        with self._lock:
+            return [n for n in self._notifications if n.requires_action]
     
     def clear_notifications(self, job_id: str = None) -> int:
-        if job_id:
-            original_count = len(self._notifications)
-            self._notifications = [n for n in self._notifications if n.job_id != job_id]
-            return original_count - len(self._notifications)
-        else:
-            count = len(self._notifications)
-            self._notifications.clear()
-            return count
+        with self._lock:
+            if job_id:
+                original_count = len(self._notifications)
+                self._notifications = [n for n in self._notifications if n.job_id != job_id]
+                return original_count - len(self._notifications)
+            else:
+                count = len(self._notifications)
+                self._notifications.clear()
+                return count
     
     def _save_notification(self, notification: SystemNotification) -> None:
         try:

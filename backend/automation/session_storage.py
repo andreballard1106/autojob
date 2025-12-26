@@ -3,6 +3,7 @@ import os
 import time
 import shutil
 import logging
+import threading
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -70,6 +71,10 @@ class ApplicationSession:
     created_at: str = ""
     updated_at: str = ""
     error_message: Optional[str] = None
+    # Platform-specific metadata storage (e.g., job description for Workday)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    # Detected platform (workday, greenhouse, etc.)
+    platform: str = "unknown"
     
     def __post_init__(self):
         now = datetime.now(timezone.utc).isoformat()
@@ -77,6 +82,8 @@ class ApplicationSession:
             self.created_at = now
         if not self.updated_at:
             self.updated_at = now
+        if self.metadata is None:
+            self.metadata = {}
     
     def add_page_snapshot(self, snapshot: PageSnapshot) -> None:
         snapshot.page_number = len(self.page_snapshots) + 1
@@ -108,6 +115,8 @@ class ApplicationSession:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "error_message": self.error_message,
+            "metadata": self.metadata,
+            "platform": self.platform,
         }
     
     @classmethod
@@ -122,6 +131,8 @@ class ApplicationSession:
             created_at=data.get("created_at", ""),
             updated_at=data.get("updated_at", ""),
             error_message=data.get("error_message"),
+            metadata=data.get("metadata", {}),
+            platform=data.get("platform", "unknown"),
         )
         
         for snap_data in data.get("page_snapshots", []):
@@ -138,6 +149,7 @@ class SessionStorage:
         self.storage_dir = storage_dir or STORAGE_DIR
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self._sessions: Dict[str, ApplicationSession] = {}
+        self._lock = threading.Lock()  # Thread-safe access to sessions
     
     def _get_session_path(self, job_id: str) -> Path:
         return self.storage_dir / f"{job_id}.json"
@@ -155,14 +167,16 @@ class SessionStorage:
         )
         session.add_navigation(url)
         
-        self._sessions[job_id] = session
+        with self._lock:
+            self._sessions[job_id] = session
         self._save_session(session)
         
         return session
     
     def get_session(self, job_id: str) -> Optional[ApplicationSession]:
-        if job_id in self._sessions:
-            return self._sessions[job_id]
+        with self._lock:
+            if job_id in self._sessions:
+                return self._sessions[job_id]
         
         session_path = self._get_session_path(job_id)
         if session_path.exists():
@@ -170,7 +184,8 @@ class SessionStorage:
                 with open(session_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 session = ApplicationSession.from_dict(data)
-                self._sessions[job_id] = session
+                with self._lock:
+                    self._sessions[job_id] = session
                 return session
             except Exception as e:
                 logger.error(f"Failed to load session {job_id}: {e}")
@@ -179,7 +194,8 @@ class SessionStorage:
     
     def update_session(self, session: ApplicationSession) -> None:
         session.updated_at = datetime.now(timezone.utc).isoformat()
-        self._sessions[session.job_id] = session
+        with self._lock:
+            self._sessions[session.job_id] = session
         self._save_session(session)
     
     def add_page_snapshot(
@@ -239,9 +255,45 @@ class SessionStorage:
             session.error_message = error_message
             self._save_session(session)
     
+    def set_session_metadata(
+        self,
+        job_id: str,
+        key: str,
+        value: Any,
+    ) -> None:
+        """Store platform-specific metadata in session."""
+        session = self.get_session(job_id)
+        if session:
+            session.metadata[key] = value
+            self._save_session(session)
+    
+    def get_session_metadata(
+        self,
+        job_id: str,
+        key: str,
+        default: Any = None,
+    ) -> Any:
+        """Retrieve platform-specific metadata from session."""
+        session = self.get_session(job_id)
+        if session and session.metadata:
+            return session.metadata.get(key, default)
+        return default
+    
+    def set_session_platform(
+        self,
+        job_id: str,
+        platform: str,
+    ) -> None:
+        """Set the detected platform for a session."""
+        session = self.get_session(job_id)
+        if session:
+            session.platform = platform
+            self._save_session(session)
+    
     def delete_session(self, job_id: str) -> bool:
-        if job_id in self._sessions:
-            del self._sessions[job_id]
+        with self._lock:
+            if job_id in self._sessions:
+                del self._sessions[job_id]
         
         session_path = self._get_session_path(job_id)
         if session_path.exists():
@@ -256,13 +308,15 @@ class SessionStorage:
     def get_all_active_sessions(self) -> List[ApplicationSession]:
         active = []
         
-        for session in self._sessions.values():
-            if session.status == "active":
-                active.append(session)
+        with self._lock:
+            for session in self._sessions.values():
+                if session.status == "active":
+                    active.append(session)
+            cached_job_ids = set(self._sessions.keys())
         
         for session_file in self.storage_dir.glob("*.json"):
             job_id = session_file.stem
-            if job_id not in self._sessions:
+            if job_id not in cached_job_ids:
                 session = self.get_session(job_id)
                 if session and session.status == "active":
                     active.append(session)
@@ -278,8 +332,9 @@ class SessionStorage:
                 try:
                     session_file.unlink()
                     job_id = session_file.stem
-                    if job_id in self._sessions:
-                        del self._sessions[job_id]
+                    with self._lock:
+                        if job_id in self._sessions:
+                            del self._sessions[job_id]
                     deleted_count += 1
                 except Exception as e:
                     logger.error(f"Failed to cleanup session: {e}")
@@ -289,8 +344,12 @@ class SessionStorage:
     def _save_session(self, session: ApplicationSession) -> None:
         session_path = self._get_session_path(session.job_id)
         try:
-            with open(session_path, "w", encoding="utf-8") as f:
+            # Use atomic write: write to temp file then rename
+            temp_path = session_path.with_suffix('.json.tmp')
+            with open(temp_path, "w", encoding="utf-8") as f:
                 json.dump(session.to_dict(), f, indent=2, ensure_ascii=False)
+            # Atomic rename (on most filesystems)
+            temp_path.replace(session_path)
         except Exception as e:
             logger.error(f"Failed to save session {session.job_id}: {e}")
 
